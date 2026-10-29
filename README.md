@@ -25,7 +25,9 @@ Check All, Export, Import, Reset and Log Out.
 ![ForgePanel settings toolbar](screenshots/toolbar.png)
 
 ### Adding a custom service
-[Watch the custom service demo (MP4)](screenshots/custom-service.mp4)
+![Adding a custom service in ForgePanel](screenshots/custom-service.gif)
+
+[Full-quality MP4](screenshots/custom-service.mp4)
 
 ## Default Login
 
