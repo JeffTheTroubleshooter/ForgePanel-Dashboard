@@ -51,4 +51,6 @@ Then open `http://localhost:8080`.
 
 ## License
 
-MIT
+MIT. See [LICENSE](LICENSE).
+
+Service logos in `assets/icons/` are trademarks of their respective projects and are not covered by the MIT license.
