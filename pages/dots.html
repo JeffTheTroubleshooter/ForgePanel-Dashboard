@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Dots</title>
+<style>
+  body { margin: 0; background: #0a0a0a; overflow: hidden; }
+  canvas { display: block; }
+</style>
+</head>
+<body>
+<canvas id="dots"></canvas>
+<script>
+const canvas = document.getElementById("dots");
+const ctx = canvas.getContext("2d");
+let dots = [];
+
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+resize();
+window.addEventListener("resize", resize);
+
+function initDots() {
+  dots = [];
+  for (let i = 0; i < 40; i++) {
+    dots.push({
+      x: Math.random() * canvas.width,
+      y: Math.random() * canvas.height,
+      vx: (Math.random() - 0.5) * 0.6,
+      vy: (Math.random() - 0.5) * 0.6,
+      r: Math.random() * 2 + 1,
+      color: Math.random() > 0.5 ? "#00e5cc" : "#ff9f1c"
+    });
+  }
+}
+initDots();
+
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  dots.forEach(d => {
+    d.x += d.vx;
+    d.y += d.vy;
+    if (d.x < 0 || d.x > canvas.width) d.vx *= -1;
+    if (d.y < 0 || d.y > canvas.height) d.vy *= -1;
+    ctx.beginPath();
+    ctx.arc(d.x, d.y, d.r, 0, Math.PI * 2);
+    ctx.fillStyle = d.color;
+    ctx.globalAlpha = 0.6;
+    ctx.fill();
+  });
+  ctx.globalAlpha = 1;
+  requestAnimationFrame(draw);
+}
+draw();
+</script>
+</body>
+</html>
