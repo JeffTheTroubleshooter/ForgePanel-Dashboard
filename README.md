@@ -1,54 +1,29 @@
-# ForgePanel-Dashboard
+# ForgePanel
 
-Self-hosted dashboard for accessing all your local and private services from one place. Add your own services, set names, IPs, ports, and icons, and check status at a glance.
-
-## Features
-
-- Service cards with online/offline status
-- Custom services (name, IP, port, icon)
-- Encrypted local storage (IndexedDB)
-- Export / Import / Reset
-- Forgot password and username recovery
-- Animated background
-
-## Default Login
-
-- **Username:** `admin`
-- **Password:** `labgate`
-
-Change credentials on first login.
+Local homelab service dashboard.
 
 ## Structure
 
 ```
-ForgePanel-Dashboard/
-├── index.html
+forgepanel/
+├── index.html              # Entry point (redirects to login)
 ├── pages/
-│   ├── login.html
-│   ├── dashboard.html
-│   └── dots.html
+│   ├── login.html          # Authentication
+│   ├── dashboard.html      # Main dashboard
+│   └── dots.html           # Background animation
 ├── js/
-│   └── auth.js
+│   └── auth.js             # Encryption + IndexedDB
 ├── css/
-│   └── main.css
+│   └── main.css            # Shared styles
 ├── assets/
-│   └── icons/
-├── config/
-│   └── forgepanel.conf
-└── custom_services/
+│   └── icons/              # Service logos
+└── config/
+    └── forgepanel.conf        # Config template
 ```
 
-## How to Run
+## Default login
 
-Serve the folder with any web server and open `index.html`.
+- Username: `admin`
+- Password: `forgepanel`
 
-```bash
-cd ForgePanel-Dashboard
-python3 -m http.server 8080
-```
-
-Then open `http://localhost:8080`.
-
-## License
-
-MIT
+Change credentials on first login.
