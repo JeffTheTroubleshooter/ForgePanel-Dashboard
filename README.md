@@ -11,6 +11,22 @@ Self-hosted dashboard for accessing all your local and private services from one
 - Forgot password and username recovery
 - Animated background
 
+## Screenshots
+
+### Login
+![ForgePanel login screen](screenshots/login.png)
+
+### Dashboard
+![ForgePanel dashboard with service cards](screenshots/dashboard.png)
+
+### Settings toolbar
+Check All, Export, Import, Reset and Log Out.
+
+![ForgePanel settings toolbar](screenshots/toolbar.png)
+
+### Adding a custom service
+[Watch the custom service demo (MP4)](screenshots/custom-service.mp4)
+
 ## Default Login
 
 - **Username:** `admin`
