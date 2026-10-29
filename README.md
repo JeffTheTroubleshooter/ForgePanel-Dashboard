@@ -25,7 +25,7 @@ Check All, Export, Import, Reset and Log Out.
 ![ForgePanel settings toolbar](screenshots/toolbar.png)
 
 ### Adding a custom service
-![Adding a custom service in ForgePanel](screenshots/custom-service.gif)
+<img src="screenshots/custom-service.gif" alt="Adding a custom service in ForgePanel" width="400">
 
 [Full-quality MP4](screenshots/custom-service.mp4)
 
