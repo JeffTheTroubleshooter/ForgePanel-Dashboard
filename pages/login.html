@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ForgePanel</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #09090b;
+    --card: #111113;
+    --text: #fafafa;
+    --muted: #a1a1aa;
+    --red: #ef4444;
+    --border: #27272a;
+    --input: #18181b;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Inter', system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+  }
+  iframe#bg {
+    position: fixed; inset: 0; width: 100%; height: 100%;
+    border: none; z-index: 0; opacity: 0.5;
+  }
+  .screen {
+    display: none; flex-direction: column; align-items: center;
+    justify-content: center; min-height: 100vh; gap: 1.25rem;
+    position: relative; z-index: 1; padding: 1.5rem;
+  }
+  .screen.active { display: flex; }
+  .card {
+    background: rgba(17,17,19,0.85);
+    backdrop-filter: blur(12px);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 2.5rem 2rem;
+    width: 100%;
+    max-width: 380px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1rem;
+  }
+  h1 {
+    font-size: 1.5rem; font-weight: 600; letter-spacing: 0.12em;
+    margin-bottom: 0.25rem;
+  }
+  p { color: var(--muted); font-size: 0.875rem; text-align: center; }
+  input {
+    background: var(--input);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 0.75rem 1rem;
+    font-size: 0.95rem;
+    width: 100%;
+    text-align: center;
+    font-family: inherit;
+    transition: border-color 0.15s;
+  }
+  input:focus { outline: none; border-color: #3f3f46; }
+  button.primary {
+    background: var(--red);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 0.75rem 1.5rem;
+    font-weight: 500;
+    cursor: pointer;
+    font-size: 0.95rem;
+    width: 100%;
+    font-family: inherit;
+    margin-top: 0.25rem;
+    transition: background 0.15s;
+  }
+  button.primary:hover { background: #dc2626; }
+  button.link {
+    background: transparent; border: none; color: var(--muted);
+    cursor: pointer; font-size: 0.8rem; font-family: inherit;
+  }
+  button.link:hover { color: var(--text); }
+  .links { display: flex; gap: 1.5rem; margin-top: 0.5rem; }
+  .error { color: var(--red); font-size: 0.8rem; min-height: 1.1em; text-align: center; }
+</style>
+<link rel="stylesheet" href="../css/main.css">
+</head>
+<body>
+<iframe id="bg" src="dots.html"></iframe>
+
+<div id="login" class="screen active">
+  <div class="card">
+    <h1>FORGEPANEL</h1>
+    <p id="login-mode">Sign in to your dashboard</p>
+    <input type="text" id="user" placeholder="Username" autocomplete="username">
+    <input type="password" id="pw" placeholder="Password" autocomplete="current-password">
+    <button class="primary" id="auth-btn" onclick="auth()">Sign In</button>
+    <div class="error" id="login-error"></div>
+    <div class="links">
+      <button class="link" onclick="showForgot()">Forgot password</button>
+      <button class="link" onclick="showForgotUser()">Forgot username</button>
+    </div>
+  </div>
+</div>
+
+<div id="change-pw" class="screen">
+  <div class="card">
+    <h1>Update Credentials</h1>
+    <p>Set a new username, password, and security question</p>
+    <input type="text" id="new-user" placeholder="New username">
+    <input type="password" id="new-pw" placeholder="New password">
+    <input type="password" id="new-pw2" placeholder="Confirm password">
+    <input type="text" id="sec-q" placeholder="Security question">
+    <input type="text" id="sec-a" placeholder="Answer">
+    <button class="primary" onclick="saveNewCredentials()">Continue</button>
+    <div class="error" id="change-error"></div>
+  </div>
+</div>
+
+<div id="forgot" class="screen">
+  <div class="card">
+    <h1>Reset Password</h1>
+    <p id="forgot-q">Answer your security question</p>
+    <input type="text" id="forgot-a" placeholder="Your answer">
+    <input type="password" id="forgot-np" placeholder="New password">
+    <input type="password" id="forgot-np2" placeholder="Confirm new password">
+    <button class="primary" onclick="resetWithSecurity()">Reset Password</button>
+    <button class="link" onclick="showScreen('login')">Back to sign in</button>
+    <div class="error" id="forgot-error"></div>
+  </div>
+</div>
+
+<div id="forgot-user" class="screen">
+  <div class="card">
+    <h1>Reset Username</h1>
+    <p id="forgot-user-q">Answer your security question</p>
+    <input type="text" id="forgot-user-a" placeholder="Your answer">
+    <input type="text" id="forgot-user-new" placeholder="New username">
+    <button class="primary" onclick="resetUsername()">Reset Username</button>
+    <button class="link" onclick="showScreen('login')">Back to sign in</button>
+    <div class="error" id="forgot-user-error"></div>
+  </div>
+</div>
+
+<script src="../js/auth.js"></script>
+<script>
+function showScreen(id) {
+  document.querySelectorAll(".screen").forEach(s => s.classList.remove("active"));
+  document.getElementById(id).classList.add("active");
+}
+
+async function init() {
+  let acc = await loadAccount();
+  const expectedHash = await hashPw("forgepanel");
+  if (!acc || (acc.user === "admin" && acc.pwHash !== expectedHash && await idbGet("mustChange"))) {
+    await idbSet("account", null);
+    const pwHash = await hashPw("forgepanel");
+    await saveAccount("admin", pwHash);
+    await idbSet("mustChange", true);
+    acc = await loadAccount();
+  }
+  if (!acc) {
+    const pwHash = await hashPw("forgepanel");
+    await saveAccount("admin", pwHash);
+    await idbSet("mustChange", true);
+  }
+  document.getElementById("user").value = "admin";
+}
+init();
+
+async function auth() {
+  const user = document.getElementById("user").value.trim();
+  const pw = document.getElementById("pw").value;
+  const err = document.getElementById("login-error");
+  if (!user || !pw) { err.textContent = "Enter username and password"; return; }
+  const acc = await loadAccount();
+  const pwHash = await hashPw(pw);
+  if (!acc || acc.user !== user || acc.pwHash !== pwHash) {
+    err.textContent = "Invalid username or password";
+    return;
+  }
+  sessionStorage.setItem("forgepanel-user", user);
+  sessionStorage.setItem("forgepanel-pw", pw);
+  const mustChange = await idbGet("mustChange");
+  if (mustChange) showScreen("change-pw");
+  else location.href = "dashboard.html";
+}
+
+async function saveNewCredentials() {
+  const nu = document.getElementById("new-user").value.trim();
+  const np = document.getElementById("new-pw").value;
+  const np2 = document.getElementById("new-pw2").value;
+  const q = document.getElementById("sec-q").value.trim();
+  const a = document.getElementById("sec-a").value.trim();
+  const err = document.getElementById("change-error");
+  if (!nu || !np) { err.textContent = "Enter username and password"; return; }
+  if (np !== np2) { err.textContent = "Passwords do not match"; return; }
+  if (np === "forgepanel" && nu === "admin") { err.textContent = "Choose a different password"; return; }
+  if (!q || !a) { err.textContent = "Set a security question and answer"; return; }
+  const pwHash = await hashPw(np);
+  await saveAccount(nu, pwHash);
+  const aHash = await hashPw(a.toLowerCase());
+  await idbSet("security", { q, aHash });
+  await idbDelete("mustChange");
+  sessionStorage.setItem("forgepanel-user", nu);
+  sessionStorage.setItem("forgepanel-pw", np);
+  location.href = "dashboard.html";
+}
+
+async function showForgot() {
+  const sec = await idbGet("security");
+  if (!sec) { document.getElementById("login-error").textContent = "No security question set"; return; }
+  document.getElementById("forgot-q").textContent = sec.q || "Answer your security question";
+  showScreen("forgot");
+}
+
+async function resetWithSecurity() {
+  const ans = document.getElementById("forgot-a").value.trim();
+  const np = document.getElementById("forgot-np").value;
+  const np2 = document.getElementById("forgot-np2").value;
+  const err = document.getElementById("forgot-error");
+  if (!ans || !np) { err.textContent = "Fill all fields"; return; }
+  if (np !== np2) { err.textContent = "Passwords do not match"; return; }
+  try {
+    const sec = await idbGet("security");
+    const aHash = await hashPw(ans.toLowerCase());
+    if (aHash !== sec.aHash) { err.textContent = "Incorrect answer"; return; }
+    const acc = await loadAccount();
+    const pwHash = await hashPw(np);
+    await saveAccount(acc.user, pwHash);
+    showScreen("login");
+    document.getElementById("login-error").textContent = "Password updated. Sign in.";
+  } catch { err.textContent = "Reset failed"; }
+}
+
+async function showForgotUser() {
+  const sec = await idbGet("security");
+  if (!sec) { document.getElementById("login-error").textContent = "No security question set"; return; }
+  document.getElementById("forgot-user-q").textContent = sec.q || "Answer your security question";
+  showScreen("forgot-user");
+}
+
+async function resetUsername() {
+  const ans = document.getElementById("forgot-user-a").value.trim();
+  const newUser = document.getElementById("forgot-user-new").value.trim();
+  const err = document.getElementById("forgot-user-error");
+  if (!ans || !newUser) { err.textContent = "Fill all fields"; return; }
+  try {
+    const sec = await idbGet("security");
+    const aHash = await hashPw(ans.toLowerCase());
+    if (aHash !== sec.aHash) { err.textContent = "Incorrect answer"; return; }
+    const acc = await loadAccount();
+    await saveAccount(newUser, acc.pwHash);
+    showScreen("login");
+    document.getElementById("login-error").textContent = "Username updated. Sign in.";
+  } catch { err.textContent = "Reset failed"; }
+}
+
+document.getElementById("pw").addEventListener("keydown", e => { if (e.key === "Enter") auth(); });
+document.getElementById("user").addEventListener("keydown", e => { if (e.key === "Enter") auth(); });
+</script>
+</body>
+</html>

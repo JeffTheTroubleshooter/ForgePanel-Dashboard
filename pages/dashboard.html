@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<title>ForgePanel</title>
+<style>
+  :root {
+    --bg: #0a0a0a;
+    --card: #141414;
+    --text: #f0f0f0;
+    --muted: #888;
+    --red: #ff2a2a;
+    --green: #22c55e;
+    --cyan: #00e5cc;
+    --orange: #ff9f1c;
+    --border: #2a2a2a;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Inter', system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+  }
+  iframe#bg {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    border: none;
+    z-index: 0;
+    pointer-events: none;
+    opacity: 0.35;
+  }
+  #dashboard { position: relative; z-index: 1; padding: 2rem 1rem 5rem; }
+  header { text-align: center; margin-bottom: 1.5rem; }
+  header h1 { font-size: 1.6rem; font-weight: 600; }
+  header p { color: var(--muted); margin-top: 0.2rem; font-size: 0.85rem; }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 1rem;
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.2rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    transition: transform 0.2s, border-color 0.2s, box-shadow 0.2s;
+    animation: fadeIn 0.4s ease both;
+  }
+  .card:hover {
+    transform: translateY(-4px) scale(1.02);
+    border-color: var(--cyan);
+    box-shadow: 0 10px 28px rgba(0,229,204,0.12);
+  }
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: none; }
+  }
+  .card-header { display: flex; align-items: center; justify-content: space-between; }
+  .icon {
+    width: 42px; height: 42px; border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    background: #1a1a1a; overflow: hidden; cursor: pointer;
+    border: 1px solid transparent;
+  }
+  .icon:hover { border-color: var(--cyan); }
+  .icon img { width: 30px; height: 30px; object-fit: contain; }
+  .status { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
+  .status.online { background: var(--green); box-shadow: 0 0 8px var(--green); }
+  .status.offline { background: var(--red); animation: flash 0.7s ease-in-out infinite; }
+  @keyframes flash {
+    0%, 100% { opacity: 1; box-shadow: 0 0 6px var(--red); }
+    50% { opacity: 0.2; box-shadow: none; }
+  }
+  .name { font-weight: 600; font-size: 1rem; }
+  .desc { font-size: 0.75rem; color: var(--muted); line-height: 1.3; }
+  .fields { display: flex; gap: 0.4rem; }
+  .fields input {
+    background: #0e0e0e; border: 1px solid var(--border); color: var(--text);
+    border-radius: 6px; padding: 0.4rem 0.5rem; font-size: 0.8rem;
+    font-family: ui-monospace, monospace; min-width: 0;
+  }
+  .fields input:first-child { flex: 1; }
+  .fields input:last-child { width: 70px; flex-shrink: 0; }
+  .actions { display: flex; gap: 0.4rem; }
+  .btn {
+    flex: 1; background: #1e1e1e; border: 1px solid var(--border);
+    color: var(--text); border-radius: 6px; padding: 0.4rem; font-size: 0.78rem; cursor: pointer;
+  }
+  .btn:hover { background: #2a2a2a; }
+  .btn.primary { background: #1a0a0a; border-color: var(--red); color: var(--red); }
+  .btn.primary:hover { background: #2a1010; }
+  input[type="file"] { display: none; }
+  #settings {
+    position: fixed; bottom: 1rem; left: 50%; transform: translateX(-50%);
+    background: #111; border: 1px solid var(--border); border-radius: 12px;
+    padding: 0.6rem 1rem; display: flex; gap: 0.5rem; z-index: 10;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+  }
+  #settings button {
+    background: #1e1e1e; border: 1px solid var(--border); color: var(--text);
+    border-radius: 6px; padding: 0.4rem 0.8rem; font-size: 0.75rem; cursor: pointer;
+  }
+  #settings button:hover { background: #2a2a2a; }
+  #settings button.danger { border-color: var(--red); color: var(--red); }
+  #modal {
+    display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+    z-index: 100; align-items: center; justify-content: center;
+  }
+  #modal.show { display: flex; }
+  #modal .box {
+    background: #141414; border: 1px solid var(--border); border-radius: 12px;
+    padding: 1.5rem; min-width: 280px; max-width: 360px; text-align: center;
+  }
+  #modal h3 { margin-bottom: 0.5rem; font-size: 1.1rem; }
+  #modal p { color: var(--muted); font-size: 0.85rem; margin-bottom: 1.2rem; }
+  #modal .btns { display: flex; gap: 0.5rem; justify-content: center; }
+  #modal button {
+    padding: 0.5rem 1.2rem; border-radius: 6px; border: 1px solid var(--border);
+    background: #1e1e1e; color: var(--text); cursor: pointer; font-size: 0.85rem;
+  }
+  #modal button.danger { border-color: var(--red); color: var(--red); }
+  #modal button.primary { background: var(--red); color: #000; border: none; font-weight: 600; }
+</style>
+<link rel="stylesheet" href="../css/main.css">
+</head>
+<body>
+<iframe id="bg" src="dots.html"></iframe>
+
+<div id="dashboard">
+  <header>
+    <h1 style="font-size:1.35rem; font-weight:600; letter-spacing:-0.02em;">ForgePanel</h1>
+    <p style="color:var(--muted); margin-top:0.15rem; font-size:0.8rem;">Service dashboard</p>
+  </header>
+  <div style="text-align:center; margin-bottom:1rem;">
+    <button onclick="addCustom()" style="background:transparent; border:1px solid var(--border); color:var(--text); border-radius:8px; padding:0.45rem 1rem; cursor:pointer; font-size:0.8rem; font-family:inherit;">Add service</button>
+  </div>
+  <div class="grid" id="grid"></div>
+</div>
+
+<div id="settings">
+  <button onclick="checkAll()" title="Check the status of all services">Check All</button>
+  <button onclick="exportConfig()" title="Download an encrypted backup of your settings">Export</button>
+  <button onclick="document.getElementById('import-file').click()" title="Restore settings from a backup file">Import</button>
+  <input type="file" id="import-file" accept=".json" onchange="importConfig(this)">
+  <button class="danger" onclick="resetAll()" title="Clear all saved IPs, ports, and custom services">Reset</button>
+  <button onclick="logout()">Log Out</button>
+</div>
+
+<div id="modal">
+  <div class="box">
+    <h3 id="modal-title">Confirm</h3>
+    <p id="modal-msg"></p>
+    <div class="btns">
+      <button id="modal-cancel">Cancel</button>
+      <button id="modal-ok" class="primary">OK</button>
+    </div>
+  </div>
+</div>
+
+<script src="../js/auth.js"></script>
+<script>
+const user = sessionStorage.getItem("forgepanel-user");
+const password = sessionStorage.getItem("forgepanel-pw");
+if (!user || !password) location.href = "login.html";
+
+let saved = {};
+
+const services = [
+  { name: "Jellyfin", desc: "Stream movies, TV, and music from your own server", port: 8096, logo: "../assets/icons/jellyfin.png" },
+  { name: "Navidrome", desc: "Personal music library and streaming", port: 4533, logo: "../assets/icons/navidrome.png" },
+  { name: "Immich", desc: "Self-hosted photo and video backup", port: 2283, logo: "../assets/icons/immich.png" },
+  { name: "Nextcloud", desc: "Your own cloud for files, calendar, and contacts", port: 80, logo: "../assets/icons/nextcloud.png" },
+  { name: "Vaultwarden", desc: "Password manager compatible with Bitwarden", port: 80, logo: "../assets/icons/vaultwarden.png" },
+  { name: "RomM", desc: "Retro game library and emulator frontend", port: 8080, logo: "../assets/icons/romm.png" },
+  { name: "AdGuard", desc: "Network-wide ad and tracker blocking", port: 3000, logo: "../assets/icons/adguard.png" },
+  { name: "FileBrowser", desc: "Web-based file manager for your storage", port: 8080, logo: "../assets/icons/filebrowser.png" },
+  { name: "TriliumNext", desc: "Hierarchical notes and knowledge base", port: 8080, logo: "../assets/icons/trilium.png" },
+  { name: "TrueNAS", desc: "Network attached storage and file shares", port: 80, logo: "../assets/icons/truenas.png" },
+  { name: "Proxmox", desc: "Virtualization and container host", port: 8006, logo: "../assets/icons/proxmox.png" },
+  { name: "NPM", desc: "Reverse proxy and SSL management", port: 81, logo: "../assets/icons/npm.png" },
+];
+
+let modalResolve = null;
+function showModal(title, msg, okText, danger) {
+  return new Promise(resolve => {
+    document.getElementById("modal-title").textContent = title;
+    document.getElementById("modal-msg").textContent = msg;
+    const okBtn = document.getElementById("modal-ok");
+    okBtn.textContent = okText || "OK";
+    okBtn.className = danger ? "danger" : "primary";
+    document.getElementById("modal").classList.add("show");
+    modalResolve = resolve;
+  });
+}
+function closeModal(result) {
+  document.getElementById("modal").classList.remove("show");
+  if (modalResolve) modalResolve(result);
+  modalResolve = null;
+}
+document.getElementById("modal-ok").onclick = () => closeModal(true);
+document.getElementById("modal-cancel").onclick = () => closeModal(false);
+
+async function loadData() {
+  try {
+    const payload = await idbGet("data");
+    if (!payload) return {};
+    return await decrypt(payload, password);
+  } catch { return {}; }
+}
+
+async function persist() {
+  const payload = await encrypt(saved, password);
+  await idbSet("data", payload);
+}
+
+function getAllServices() {
+  const customs = saved._custom || [];
+  return services.concat(customs.map((c, i) => ({
+    name: c.name || "Custom " + (i+1),
+    desc: c.desc || "Custom service",
+    port: c.port || 80,
+    logo: c.logo || "../assets/icons/npm.png",
+    custom: true,
+    customIndex: i
+  })));
+}
+
+function getConfig(name) {
+  if (saved[name]) return saved[name];
+  const base = services.find(s => s.name === name);
+  if (base) return { ip: "", port: base.port, logo: null };
+  const customs = saved._custom || [];
+  const c = customs.find(x => (x.name || "") === name);
+  return c || { ip: "", port: 80, logo: null };
+}
+
+function urlFor(name) {
+  const c = getConfig(name);
+  if (!c.ip) return "";
+  const proto = (c.port === 443) ? "https" : "http";
+  const port = (c.port === 80 || c.port === 443) ? "" : `:${c.port}`;
+  return `${proto}://${c.ip}${port}`;
+}
+
+function render() {
+  const all = getAllServices();
+  const grid = document.getElementById("grid");
+  grid.innerHTML = all.map((s, i) => {
+    const c = getConfig(s.name);
+    const logoSrc = c.logo || s.logo;
+    return `
+      <div class="card" style="animation-delay:${i * 35}ms">
+        <div class="card-header">
+          <div class="icon" onclick="document.getElementById('file-${i}').click()" title="Change logo">
+            <img src="${logoSrc}" alt="${s.name}" id="img-${i}">
+          </div>
+          <div class="status" id="status-${i}"></div>
+          <input type="file" id="file-${i}" accept="image/*" onchange="changeLogo(${i}, this)">
+        </div>
+        <div class="name">${s.custom ? `<input id="name-${i}" value="${s.name}" placeholder="Service name" style="background:transparent; border:none; color:inherit; font-weight:600; font-size:1rem; width:100%;">` : s.name}</div>
+        <div class="desc">${s.desc}</div>
+        <div class="fields">
+          <input id="ip-${i}" placeholder="IP or hostname" value="${c.ip || ""}">
+          <input id="port-${i}" placeholder="Port" value="${c.port || s.port}">
+        </div>
+        <div class="actions">
+          <button class="btn" onclick="saveAndCheck(${i})">Save & Check</button>
+          <button class="btn primary" onclick="openService(${i})">Open</button>
+          ${s.custom ? `<button class="btn" style="border-color:var(--red); color:var(--red);" onclick="deleteCustom(${s.customIndex})">Delete</button>` : ""}
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+async function changeLogo(i, input) {
+  const file = input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = async () => {
+    const all = getAllServices();
+    const s = all[i];
+    if (s.custom) {
+      const customs = saved._custom || [];
+      const c = customs[s.customIndex] || {};
+      c.logo = reader.result;
+      customs[s.customIndex] = c;
+      saved._custom = customs;
+    } else {
+      const c = getConfig(s.name);
+      c.logo = reader.result;
+      saved[s.name] = c;
+    }
+    document.getElementById(`img-${i}`).src = reader.result;
+    await persist();
+  };
+  reader.readAsDataURL(file);
+}
+
+async function saveAndCheck(i) {
+  const all = getAllServices();
+  const s = all[i];
+  const ip = document.getElementById(`ip-${i}`).value.trim();
+  const port = document.getElementById(`port-${i}`).value.trim();
+  const nameInput = document.getElementById(`name-${i}`);
+  if (s.custom) {
+    const customs = saved._custom || [];
+    const c = customs[s.customIndex] || {};
+    c.ip = ip;
+    c.port = parseInt(port) || 80;
+    if (nameInput) c.name = nameInput.value.trim();
+    customs[s.customIndex] = c;
+    saved._custom = customs;
+  } else {
+    const c = getConfig(s.name);
+    c.ip = ip;
+    c.port = parseInt(port) || 80;
+    saved[s.name] = c;
+  }
+  await persist();
+  checkStatus(i);
+}
+
+function openService(i) {
+  const all = getAllServices();
+  const s = all[i];
+  const ip = document.getElementById(`ip-${i}`).value.trim();
+  const port = document.getElementById(`port-${i}`).value.trim();
+  if (s.custom) {
+    const customs = saved._custom || [];
+    const c = customs[s.customIndex] || {};
+    c.ip = ip;
+    c.port = parseInt(port) || 80;
+    const nameInput = document.getElementById(`name-${i}`);
+    if (nameInput) c.name = nameInput.value.trim();
+    customs[s.customIndex] = c;
+    saved._custom = customs;
+  } else {
+    const c = getConfig(s.name);
+    c.ip = ip;
+    c.port = parseInt(port) || 80;
+    saved[s.name] = c;
+  }
+  persist();
+  const url = urlFor(s.name);
+  if (url) window.open(url, "_blank");
+}
+
+async function checkStatus(i) {
+  const all = getAllServices();
+  const s = all[i];
+  const el = document.getElementById(`status-${i}`);
+  if (!el) return;
+  const url = urlFor(s.name);
+  if (!url) { el.className = "status"; return; }
+  el.className = "status";
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3000);
+    await fetch(url, { mode: "no-cors", signal: controller.signal });
+    clearTimeout(timeout);
+    el.className = "status online";
+  } catch {
+    el.className = "status offline";
+  }
+}
+
+function checkAll() { getAllServices().forEach((_, i) => checkStatus(i)); }
+
+async function addCustom() {
+  if (!saved._custom) saved._custom = [];
+  saved._custom.push({ name: "", desc: "Custom service", port: 80, ip: "", logo: null });
+  await persist();
+  render();
+}
+
+async function deleteCustom(index) {
+  if (!await showModal("Delete Service", "Delete this custom service?", "Delete", true)) return;
+  const customs = saved._custom || [];
+  customs.splice(index, 1);
+  saved._custom = customs;
+  await persist();
+  render();
+}
+
+async function exportConfig() {
+  const payload = await encrypt(saved, password);
+  const blob = new Blob([JSON.stringify({ account: user, data: payload })], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "forgepanel.conf";
+  a.click();
+}
+
+async function importConfig(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const text = await file.text();
+  try {
+    const obj = JSON.parse(text);
+    if (obj.data) {
+      saved = await decrypt(obj.data, password);
+      await persist();
+      render();
+      checkAll();
+    }
+  } catch {
+    await showModal("Import Failed", "Wrong password or corrupted file.", "OK");
+  }
+  input.value = "";
+}
+
+async function resetAll() {
+  if (!await showModal("Reset All", "Clear all saved IPs, ports, and custom services?", "Reset", true)) return;
+  saved = {};
+  await persist();
+  render();
+}
+
+function logout() {
+  sessionStorage.removeItem("forgepanel-user");
+  sessionStorage.removeItem("forgepanel-pw");
+  location.href = "login.html";
+}
+
+(async () => {
+  saved = await loadData();
+  render();
+  checkAll();
+  setInterval(checkAll, 30000);
+})();
+</script>
+</body>
+</html>
