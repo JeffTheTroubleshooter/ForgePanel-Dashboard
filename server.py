@@ -781,15 +781,25 @@ def flag_new(dek, result):
     st.set_setting(dek, "scan_pending", list(pending.values()))
     return added
 
-def run_scan_job(subnet, source="server", flag=False):
+class ScanCancelled(Exception):
+    pass
+
+def run_scan_job(subnet, source="server", flag=False, cancel=None):
+    cancel = cancel or threading.Event()
     try:
         sc = load_scanner()
+        # Cancel support: queued port/HTTP checks return immediately once cancel is set.
+        _po, _hp = sc.port_open, sc.http_probe
+        sc.port_open = lambda *a, **k: False if cancel.is_set() else _po(*a, **k)
+        sc.http_probe = lambda *a, **k: (None, "", "") if cancel.is_set() else _hp(*a, **k)
         conf = sc.load_conf(os.path.join(ROOT, "scan", "scan.conf"))
         try:
             spec, hosts = sc.resolve_hosts(subnet or conf["subnet"], conf["max_hosts"])
         except SystemExit as e:
             raise ValueError(str(e))
         found = sc.scan(conf, hosts)
+        if cancel.is_set():
+            raise ScanCancelled()
         result = {"format": "forgepanel-scan", "version": 1, "generated": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
                   "subnet": spec, "hosts_scanned": len(hosts), "services": found}
         if not STATE.worker["ready"]:
@@ -799,21 +809,45 @@ def run_scan_job(subnet, source="server", flag=False):
         if flag:
             n = flag_new(dek, result)
             log.info("Auto-scan found %d service(s), %d new", len(found), n)
-        STATE.scan["error"] = None
+        if STATE.scan.get("cancel") is cancel:
+            STATE.scan["error"] = None
+    except ScanCancelled:
+        log.info("Scan cancelled")
     except Exception as e:
         log.warning("Scan failed: %s", e)
-        STATE.scan["error"] = str(e)
+        if STATE.scan.get("cancel") is cancel:
+            STATE.scan["error"] = str(e)
     finally:
-        STATE.scan["running"] = False
-        STATE.store.set_meta("last_scan", int(time.time()))
+        with STATE.lock:
+            if STATE.scan.get("cancel") is cancel:   # a cancelled job never clears a newer scan
+                STATE.scan["running"] = False
+                STATE.scan["cancel"] = None
+        if not cancel.is_set():
+            STATE.store.set_meta("last_scan", int(time.time()))
 
 def start_scan(subnet=None, source="server", flag=False):
     with STATE.lock:
         if STATE.scan["running"]:
             return False
-        STATE.scan.update(running=True, error=None, started=time.time(), source=source)
-    threading.Thread(target=run_scan_job, args=(subnet, source, flag), daemon=True).start()
+        cancel = threading.Event()
+        STATE.scan.update(running=True, error=None, started=time.time(), source=source, cancel=cancel, cancelled=False)
+    threading.Thread(target=run_scan_job, args=(subnet, source, flag, cancel), daemon=True).start()
     return True
+
+def cancel_scan():
+    with STATE.lock:
+        ev = STATE.scan.get("cancel")
+        if not STATE.scan["running"] or ev is None:
+            return False
+        ev.set()
+        STATE.scan.update(running=False, cancel=None, error=None, cancelled=True)
+    return True
+
+def r_scan_cancel(h, d):
+    tok, s = h.need_session()
+    if not tok:
+        return
+    h.send_json(200, {"ok": True, "cancelled": cancel_scan(), "running": STATE.scan["running"]})
 
 def r_scan_start(h, d):
     tok, s = h.need_session()
@@ -828,6 +862,7 @@ def r_scan_get(h, d):
     tok, s = h.need_session()
     if tok:
         h.send_json(200, {"running": STATE.scan["running"], "error": STATE.scan["error"], "source": STATE.scan["source"],
+                          "cancelled": bool(STATE.scan.get("cancelled")),
                           "latest": STATE.store.latest_scan(s["dek"])})
 
 def r_scan_import(h, d):
@@ -1188,6 +1223,7 @@ ROUTES = {
     ("POST", "/api/import"): r_import,
     ("POST", "/api/scan"): r_scan_start,
     ("GET", "/api/scan"): r_scan_get,
+    ("POST", "/api/scan/cancel"): r_scan_cancel,
     ("POST", "/api/scan/import"): r_scan_import,
 }
 

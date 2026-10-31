@@ -346,11 +346,11 @@
   }
   function toggle() { (ov && !closing) ? close() : open(); }
   window.openCoreMap = open; window.closeCoreMap = close; window.toggleCoreMap = toggle;
-  // Initial view: a fresh login expands into the Core Map; a refresh keeps the session's last view.
-  addEventListener("load", () => {
+    addEventListener("load", () => {
+    // A fresh login always lands on the dashboard; a refresh keeps the session's last view.
     let fresh = false, view = null;
     try { fresh = sessionStorage.getItem("fp_fresh_login") === "1"; sessionStorage.removeItem("fp_fresh_login"); view = sessionStorage.getItem("fp_view"); } catch (e) {}
-    if (fresh) setTimeout(() => open(true), 350);
+    if (fresh) { try { sessionStorage.setItem("fp_view", "dash"); } catch (e) {} }
     else if (view === "map") open(false);
   });
 })();

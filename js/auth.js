@@ -2,8 +2,9 @@
 // the browser only holds an HttpOnly session cookie. No IndexedDB, no
 // sessionStorage passwords, no crypto.subtle, so plain http://<ip> works.
 
-async function api(path, method = "GET", body) {
+async function api(path, method = "GET", body, signal) {
   const opts = { method, credentials: "same-origin", headers: {} };
+  if (signal) opts.signal = signal;
   if (body !== undefined) {
     opts.headers["Content-Type"] = "application/json";
     opts.body = JSON.stringify(body);
@@ -13,7 +14,10 @@ async function api(path, method = "GET", body) {
   }
   let res;
   try { res = await fetch("/api/" + path, opts); }
-  catch { throw Object.assign(new Error("Cannot reach the ForgePanel server. Is server.py running?"), { status: 0 }); }
+  catch (e) {
+    if (e && e.name === "AbortError") throw Object.assign(new Error("Aborted"), { status: 0, aborted: true });
+    throw Object.assign(new Error("Cannot reach the ForgePanel server. Is server.py running?"), { status: 0 });
+  }
   let data = {};
   try { data = await res.json(); } catch { /* non-JSON */ }
   if (!res.ok) {

@@ -6,9 +6,9 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <title>ForgePanel</title>
-<link rel="icon" type="image/png" sizes="32x32" href="../assets/favicon-32.png?v=20261031d">
-<link rel="icon" type="image/png" sizes="192x192" href="../assets/favicon-192.png?v=20261031d">
-<link rel="apple-touch-icon" href="../assets/favicon-192.png?v=20261031d">
+<link rel="icon" type="image/png" sizes="32x32" href="../assets/favicon-32.png?v=20261031e">
+<link rel="icon" type="image/png" sizes="192x192" href="../assets/favicon-192.png?v=20261031e">
+<link rel="apple-touch-icon" href="../assets/favicon-192.png?v=20261031e">
 <style>
   :root {
     --bg: #0a0a0a;
@@ -213,6 +213,9 @@
   .stat svg { width:100%; height:30px; display:block; margin-top:0.3rem; }
   .bar { height:6px; background:#222; border-radius:3px; overflow:hidden; margin-top:0.35rem; }
   .bar > div { height:100%; background:var(--cyan); }
+  #scan-cancel-wrap { text-align:center; margin:-0.4rem 0 0.9rem; }
+  #scan-cancel { background:#1a1a1a; border:1px solid var(--red); color:var(--red); padding:0.45rem 0.9rem; border-radius:8px; cursor:pointer; font:inherit; font-size:0.8rem; }
+  #scan-cancel:hover { background:#2a1010; }
   #scan-status { text-align:center; color: var(--muted); font-size: 0.8rem; min-height: 1.1em; margin-bottom: 0.8rem; }
   /* critical header styles (kept inline so a stale main.css can't break the header) */
   .sr-only { position:absolute !important; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; border:0; }
@@ -221,7 +224,7 @@
   .brand-logo { width:64px; height:64px; display:block; }
   .cm-bubble { position:absolute; left:calc(100% + 12px); top:50%; transform:translateY(-50%); white-space:nowrap; background:#141414; border:1px solid #2a2a2a; border-left:2px solid #ff2a2a; color:#e5e5e5; font-size:12px; padding:5px 10px; border-radius:10px; pointer-events:none; }
 </style>
-<link rel="stylesheet" href="../css/main.css?v=20261031d">
+<link rel="stylesheet" href="../css/main.css?v=20261031e">
 </head>
 <body>
 <iframe id="bg" src="dots.html"></iframe>
@@ -230,7 +233,7 @@
   <header>
     <h1 class="sr-only">ForgePanel – Service Dashboard</h1>
     <div class="brand-wrap">
-      <button class="brand-btn" id="brand-btn" onclick="toggleCoreMap()" aria-label="ForgePanel – Service Dashboard. Toggle Core Map view" aria-pressed="false" title="ForgePanel – toggle Core Map"><img class="brand-logo" src="../assets/logo.svg?v=20261031d" alt="" width="64" height="64"></button>
+      <button class="brand-btn" id="brand-btn" onclick="toggleCoreMap()" aria-label="ForgePanel – Service Dashboard. Toggle Core Map view" aria-pressed="false" title="ForgePanel – toggle Core Map"><img class="brand-logo" src="../assets/logo.svg?v=20261031e" alt="" width="64" height="64"></button>
       <span class="cm-bubble" id="cm-bubble" aria-hidden="true">Click me</span>
     </div>
   </header>
@@ -248,6 +251,7 @@
   </div>
   <div id="stats"></div>
   <div id="scan-status"></div>
+  <div id="scan-cancel-wrap" hidden><button id="scan-cancel" class="danger" onclick="cancelScan()" title="Stop the running network scan">Cancel scan</button></div>
   <div id="groups"></div>
 </div>
 
@@ -300,9 +304,9 @@
   </div>
 </div>
 
-<script src="../js/auth.js?v=20261031d"></script>
-<script src="../js/griddrag.js?v=20261031d"></script>
-<script src="../js/coremap.js?v=20261031d"></script>
+<script src="../js/auth.js?v=20261031e"></script>
+<script src="../js/griddrag.js?v=20261031e"></script>
+<script src="../js/coremap.js?v=20261031e"></script>
 <script>
 let saved = {};
 let user = "";
@@ -932,26 +936,45 @@ async function importConfig(input) {
 // ── Network scan ──
 function setScanStatus(t) { document.getElementById("scan-status").textContent = t; }
 
+let scanCtl = null;   // AbortController of the running scan (null when idle)
+function scanUi(running) { document.getElementById("scan-cancel-wrap").hidden = !running; }
 async function scanNetwork() {
+  if (scanCtl) return;
   if (!await showModal("Scan Network", "Scan the local network for self-hosted services now? This uses scan/scan.conf on the server and can take up to a minute.", "Scan")) return;
+  const ctl = scanCtl = new AbortController();
+  const done = () => { if (scanCtl === ctl) { scanCtl = null; scanUi(false); } };
+  scanUi(true);
   try {
-    await api("scan", "POST", {});
+    await api("scan", "POST", {}, ctl.signal);
   } catch (e) {
-    if (handleAuthError(e)) return;
-    if (e.status !== 409) { await showModal("Scan Failed", e.message, "OK"); return; }
+    if (ctl.signal.aborted) return done();
+    if (handleAuthError(e)) return done();
+    if (e.status !== 409) { done(); await showModal("Scan Failed", e.message, "OK"); return; }
   }
   setScanStatus("Scanning network...");
   const t0 = Date.now();
   for (;;) {
-    await new Promise(r => setTimeout(r, 2000));
+    await new Promise(r => { const tm = setTimeout(r, 2000); ctl.signal.addEventListener("abort", () => { clearTimeout(tm); r(); }, { once: true }); });
+    if (ctl.signal.aborted) return done();
     let st;
-    try { st = await api("scan"); } catch (e) { if (!handleAuthError(e)) setScanStatus(e.message); return; }
+    try { st = await api("scan", "GET", undefined, ctl.signal); }
+    catch (e) { if (ctl.signal.aborted) return done(); done(); if (!handleAuthError(e)) setScanStatus(e.message); return; }
+    if (ctl.signal.aborted) return done();
     if (st.running) { setScanStatus(`Scanning network... ${Math.round((Date.now() - t0) / 1000)}s`); continue; }
-    setScanStatus("");
+    done(); setScanStatus("");
+    if (st.cancelled) { setScanStatus("Scan cancelled"); return; }
     if (st.error) { await showModal("Scan Failed", st.error, "OK"); return; }
     if (st.latest) await applyScan(st.latest.result);
     return;
   }
+}
+async function cancelScan() {
+  const ctl = scanCtl; if (!ctl) return;
+  ctl.abort(); scanCtl = null; scanUi(false);
+  setScanStatus("Cancelling scan...");
+  try { await api("scan/cancel", "POST", {}); setScanStatus("Scan cancelled"); }
+  catch (e) { if (!handleAuthError(e)) setScanStatus("Scan cancelled here, but the server could not be told: " + e.message); }
+  setTimeout(() => { if (!scanCtl && document.getElementById("scan-status").textContent === "Scan cancelled") setScanStatus(""); }, 4000);
 }
 
 async function importScan() {
