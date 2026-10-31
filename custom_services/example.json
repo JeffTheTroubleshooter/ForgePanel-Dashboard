@@ -1,0 +1,11 @@
+{
+  "generated_by": "example",
+  "name": "Portainer",
+  "host": "192.168.1.21",
+  "port": 9000,
+  "scheme": "http",
+  "url": "http://192.168.1.21:9000",
+  "source": "scan",
+  "found_at": "2026-01-01T12:00:00+0000",
+  "matched_by": "fingerprint"
+}

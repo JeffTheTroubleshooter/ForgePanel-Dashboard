@@ -18,6 +18,9 @@ import json
 import logging
 import os
 import posixpath
+import re
+import socket
+import ssl
 import secrets
 import sqlite3
 import sys
@@ -34,6 +37,8 @@ except ImportError:  # optional
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_DB = os.path.join(ROOT, "database", "forgepanel.db")
+CUSTOM_DIR = os.path.join(ROOT, "custom_services")
+GEN_MARK = "forgepanel-scan"   # "generated_by" value of scan-written custom_services/*.json
 SESSION_TTL = 12 * 3600
 COOKIE = "fp_session"
 MAX_BODY = 12 * 1024 * 1024
@@ -244,6 +249,7 @@ class Store:
             for i, c in enumerate(customs):
                 e, b = seal(dek, c)
                 self.db.execute("INSERT INTO custom_services (pos, enc, blob) VALUES (?,?,?)", (i, e, b))
+        sync_custom_files(customs)
 
     def add_scan(self, dek, result, source):
         e, b = seal(dek, result)
@@ -258,6 +264,119 @@ class Store:
             return None
         created, source, e, b = rows[0]
         return {"created": created, "source": source, "result": unseal(dek, e, b)}
+
+# ── custom_services/ files for scan-found services ─────────────────────────
+def slug(text):
+    return re.sub(r"[^a-z0-9.]+", "-", str(text).lower()).strip("-.")[:80] or "service"
+
+def custom_file_record(c):
+    """Shareable, secret-free description of a scan-found custom service, or None."""
+    if not isinstance(c, dict) or c.get("source") != "scan":
+        return None
+    host = str(c.get("ip") or "").strip()
+    try:
+        port = int(c.get("port") or 0)
+    except (TypeError, ValueError):
+        return None
+    if not host or not re.fullmatch(r"[A-Za-z0-9.:\-\[\]]+", host) or not 0 < port < 65536:
+        return None
+    scheme = "https" if c.get("scheme") == "https" else "http"
+    name = str(c.get("name") or f"Service {port}")[:80]
+    default = (scheme == "http" and port == 80) or (scheme == "https" and port == 443)
+    fname = f"{slug(name.split(' (')[0])}-{slug(host)}-{port}.json"
+    return fname, {
+        "generated_by": GEN_MARK, "name": name, "host": host, "port": port, "scheme": scheme,
+        "url": f"{scheme}://{host}{'' if default else ':' + str(port)}",
+        "source": "scan", "found_at": c.get("found_at"), "matched_by": c.get("matched_by"),
+    }
+
+def sync_custom_files(customs, folder=None):
+    """Write one JSON per scan-found custom service; remove stale scan-written files.
+    Hand-made files (without generated_by=forgepanel-scan) are never touched."""
+    folder = folder or CUSTOM_DIR
+    try:
+        os.makedirs(folder, exist_ok=True)
+        want = {}
+        for c in customs or []:
+            rec = custom_file_record(c)
+            if rec and rec[0] not in want:
+                want[rec[0]] = rec[1]
+        for fn in os.listdir(folder):
+            if not fn.endswith(".json") or fn in want:
+                continue
+            path = os.path.join(folder, fn)
+            try:
+                with open(path) as fh:
+                    gen = json.load(fh).get("generated_by") == GEN_MARK
+            except (OSError, ValueError, AttributeError):
+                gen = False
+            if gen:
+                os.remove(path)
+        for fn, data in want.items():
+            path = os.path.join(folder, fn)
+            text = json.dumps(data, indent=2) + "\n"
+            try:
+                with open(path) as fh:
+                    if fh.read() == text:
+                        continue
+            except OSError:
+                pass
+            tmp = path + ".tmp"
+            with open(tmp, "w") as fh:
+                fh.write(text)
+            os.replace(tmp, path)
+    except OSError as e:
+        log.warning("Could not update %s: %s", folder, e)
+
+# ── server-side status check (no browser CORS / self-signed TLS issues) ────
+def check_service(host, port, scheme, timeout=3.0):
+    try:
+        sock = socket.create_connection((host, port), timeout=timeout)
+    except OSError:
+        return {"online": False}
+    detected = None
+    try:
+        sock.settimeout(timeout)
+        if scheme == "https":
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            try:
+                with ctx.wrap_socket(sock, server_hostname=host):
+                    detected = "https"
+            except (ssl.SSLError, OSError):
+                detected = "http"   # TCP open but not TLS
+        else:
+            sock.sendall(f"HEAD / HTTP/1.0\r\nHost: {host}\r\n\r\n".encode())
+            try:
+                head = sock.recv(64)
+            except OSError:
+                head = b""
+            if head.startswith(b"HTTP/"):
+                detected = "http"
+            elif head[:1] == b"\x15" or b"\x15\x03" in head[:3]:
+                detected = "https"  # TLS alert: server speaks HTTPS
+            else:
+                detected = None
+    except OSError:
+        pass
+    finally:
+        try:
+            sock.close()
+        except OSError:
+            pass
+    if detected is None and scheme == "http":
+        # no HTTP reply: see whether the port speaks TLS instead
+        try:
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            with socket.create_connection((host, port), timeout=timeout) as raw:
+                with ctx.wrap_socket(raw, server_hostname=host):
+                    detected = "https"
+        except (ssl.SSLError, OSError):
+            pass
+    return {"online": True, "scheme": detected}
 
 # ── scanner (imports scan/scan.py) ─────────────────────────────────────────
 def load_scanner():
@@ -342,6 +461,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return True
         low = path.lower()
         if low.endswith((".db", ".sqlite", ".sqlite3", ".db-wal", ".db-shm", ".db-journal", ".py", ".pyc", ".sh", ".conf")):
+            return True
+        if len(parts) >= 2 and parts[0] == "custom_services" and parts[-1].endswith(".json") and parts[-1] != "example.json":
             return True
         if len(parts) >= 2 and parts[0] == "scan" and parts[1].startswith("results.") and parts[1] != "results.example.json":
             return True
@@ -654,7 +775,29 @@ def r_scan_import(h, d):
     STATE.store.add_scan(s["dek"], result, "import")
     h.send_json(200, {"ok": True, "latest": STATE.store.latest_scan(s["dek"])})
 
+def r_check(h, d):
+    tok, s = h.need_session()
+    if not tok:
+        return
+    items = d.get("items")
+    if not isinstance(items, list) or len(items) > 200:
+        raise ValueError("items must be a list (max 200)")
+    def one(it):
+        host = str(it.get("ip") or "").strip()
+        try:
+            port = int(it.get("port"))
+        except (TypeError, ValueError):
+            return {"online": False}
+        if not host or not re.fullmatch(r"[A-Za-z0-9.:\-\[\]]+", host) or not 0 < port < 65536:
+            return {"online": False}
+        return check_service(host, port, "https" if it.get("scheme") == "https" else "http")
+    import concurrent.futures as cf
+    with cf.ThreadPoolExecutor(16) as ex:
+        results = list(ex.map(one, items))
+    h.send_json(200, {"results": results})
+
 ROUTES = {
+    ("POST", "/api/check"): r_check,
     ("GET", "/api/status"): r_status,
     ("POST", "/api/login"): r_login,
     ("POST", "/api/logout"): r_logout,

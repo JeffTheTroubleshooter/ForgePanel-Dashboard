@@ -265,6 +265,7 @@ function getConfig(name) {
 }
 
 function cfgFor(s) {
+  if (s._cfg) return s._cfg;
   return s.custom ? ((saved._custom || [])[s.customIndex] || {}) : getConfig(s.name);
 }
 
@@ -368,25 +369,37 @@ function openService(i) {
   if (url) window.open(url, "_blank", "noopener");
 }
 
-async function checkStatus(i) {
-  const s = getAllServices()[i];
-  const el = document.getElementById(`status-${i}`);
-  if (!el || !s) return;
-  const url = urlFor(s);
-  el.className = "status";
-  if (!url) return;
+// Status is checked by the server (TCP + HTTP/TLS probe), so self-signed HTTPS,
+// CORS and mixed content no longer turn the dot red. A wrong http/https scheme
+// is corrected when the server sees the other protocol.
+async function checkMany(indexes) {
+  const all = getAllServices();
+  const todo = indexes.map(i => ({ i, s: all[i] })).filter(x => x.s && document.getElementById(`status-${x.i}`));
+  const items = [];
+  todo.forEach(x => {
+    const el = document.getElementById(`status-${x.i}`);
+    const c = cfgFor(x.s);
+    el.className = "status";
+    if (c.ip) items.push({ x, c });
+  });
+  if (!items.length) return;
+  let res;
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 3000);
-    await fetch(url, { mode: "no-cors", signal: controller.signal });
-    clearTimeout(timeout);
-    el.className = "status online";
-  } catch {
-    el.className = "status offline";
-  }
+    res = (await api("check", "POST", { items: items.map(({ c }) => ({ ip: c.ip, port: c.port, scheme: urlFor(itemsSvc(c)).split(":")[0] })) })).results;
+  } catch (e) { if (!handleAuthError(e)) console.warn(e.message); return; }
+  let changed = false;
+  items.forEach(({ x, c }, k) => {
+    const r = res[k] || {};
+    const el = document.getElementById(`status-${x.i}`);
+    if (el) el.className = r.online ? "status online" : "status offline";
+    const cur = urlFor(itemsSvc(c)).split(":")[0];
+    if (r.online && r.scheme && r.scheme !== cur) { c.scheme = r.scheme; changed = true; }
+  });
+  if (changed) persist();
 }
-
-function checkAll() { getAllServices().forEach((_, i) => checkStatus(i)); }
+const itemsSvc = c => ({ custom: true, customIndex: -1, _cfg: c });
+function checkStatus(i) { return checkMany([i]); }
+function checkAll() { return checkMany(getAllServices().map((_, i) => i)); }
 
 async function addCustom() {
   if (!saved._custom) saved._custom = [];
@@ -500,6 +513,7 @@ const scanText = (v, max) => String(v || "").replace(/[<>"'`&]/g, "").slice(0, m
 
 async function applyScan(data) {
   const found = (data && Array.isArray(data.services)) ? data.services : [];
+  const foundAt = data && data.generated;
   const officialNames = services.map(s => s.name);
   saved._custom = saved._custom || [];
   const taken = new Set();
@@ -519,7 +533,8 @@ async function applyScan(data) {
     } else {
       const name = off ? `${off} (${ip})` : scanText(f.name || `Service :${port}`, 60);
       const desc = f.title ? `Found by scan: ${scanText(f.title, 80)}` : "Found by network scan";
-      saved._custom.push({ name, desc, port, ip, scheme, logo: null });
+      saved._custom.push({ name, desc, port, ip, scheme, logo: null, source: "scan",
+        found_at: scanText(foundAt, 40) || null, matched_by: scanText(f.identified_by, 20) || null });
       addedCustom++;
     }
     taken.add(key);

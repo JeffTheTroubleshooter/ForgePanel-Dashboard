@@ -9,3 +9,7 @@ database/*
 !database/README.md
 !database/.gitkeep
 data/
+
+# Scan-written custom service files (contain LAN IPs) - keep only the example
+custom_services/*.json
+!custom_services/example.json
