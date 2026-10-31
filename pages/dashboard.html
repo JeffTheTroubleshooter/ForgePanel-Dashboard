@@ -6,9 +6,9 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <title>ForgePanel</title>
-<link rel="icon" type="image/png" sizes="32x32" href="../assets/favicon-32.png?v=20261031c">
-<link rel="icon" type="image/png" sizes="192x192" href="../assets/favicon-192.png?v=20261031c">
-<link rel="apple-touch-icon" href="../assets/favicon-192.png?v=20261031c">
+<link rel="icon" type="image/png" sizes="32x32" href="../assets/favicon-32.png?v=20261031d">
+<link rel="icon" type="image/png" sizes="192x192" href="../assets/favicon-192.png?v=20261031d">
+<link rel="apple-touch-icon" href="../assets/favicon-192.png?v=20261031d">
 <style>
   :root {
     --bg: #0a0a0a;
@@ -219,9 +219,9 @@
   .brand-wrap { position:relative; display:inline-block; }
   .brand-btn { background:none; border:0; padding:0; margin:0; cursor:pointer; display:inline-flex; color:inherit; font:inherit; border-radius:16px; }
   .brand-logo { width:64px; height:64px; display:block; }
-  .cm-bubble { position:absolute; left:calc(100% + 12px); top:50%; opacity:0; visibility:hidden; pointer-events:none; }
+  .cm-bubble { position:absolute; left:calc(100% + 12px); top:50%; transform:translateY(-50%); white-space:nowrap; background:#141414; border:1px solid #2a2a2a; border-left:2px solid #ff2a2a; color:#e5e5e5; font-size:12px; padding:5px 10px; border-radius:10px; pointer-events:none; }
 </style>
-<link rel="stylesheet" href="../css/main.css?v=20261031c">
+<link rel="stylesheet" href="../css/main.css?v=20261031d">
 </head>
 <body>
 <iframe id="bg" src="dots.html"></iframe>
@@ -230,7 +230,7 @@
   <header>
     <h1 class="sr-only">ForgePanel – Service Dashboard</h1>
     <div class="brand-wrap">
-      <button class="brand-btn" id="brand-btn" onclick="toggleCoreMap()" aria-label="ForgePanel – Service Dashboard. Toggle Core Map view" aria-pressed="false" title="ForgePanel – toggle Core Map"><img class="brand-logo" src="../assets/logo.svg?v=20261031c" alt="" width="64" height="64"></button>
+      <button class="brand-btn" id="brand-btn" onclick="toggleCoreMap()" aria-label="ForgePanel – Service Dashboard. Toggle Core Map view" aria-pressed="false" title="ForgePanel – toggle Core Map"><img class="brand-logo" src="../assets/logo.svg?v=20261031d" alt="" width="64" height="64"></button>
       <span class="cm-bubble" id="cm-bubble" aria-hidden="true">Click me</span>
     </div>
   </header>
@@ -300,9 +300,9 @@
   </div>
 </div>
 
-<script src="../js/auth.js?v=20261031c"></script>
-<script src="../js/griddrag.js?v=20261031c"></script>
-<script src="../js/coremap.js?v=20261031c"></script>
+<script src="../js/auth.js?v=20261031d"></script>
+<script src="../js/griddrag.js?v=20261031d"></script>
+<script src="../js/coremap.js?v=20261031d"></script>
 <script>
 let saved = {};
 let user = "";
