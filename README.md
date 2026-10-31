@@ -73,6 +73,16 @@ sudo systemctl restart forgepanel
 sudo systemctl disable --now forgepanel   # stop and remove from boot
 ```
 
+## Uninstall
+
+Run the same script with `uninstall`:
+
+```bash
+bash forgepanel-install.sh uninstall
+```
+
+It stops and removes the `forgepanel` service (systemd, or OpenRC on Alpine), asks which install directory to delete (default `/opt/forgepanel`), and then asks whether to remove python3 and git too. Say no to that last question if other software on the machine uses them.
+
 ## Manual Run
 
 Serve the folder with any web server and open `index.html`.
