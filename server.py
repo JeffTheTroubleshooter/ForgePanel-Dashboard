@@ -18,6 +18,8 @@ import json
 import logging
 import os
 import posixpath
+import shutil
+import subprocess
 import re
 import socket
 import ssl
@@ -107,6 +109,9 @@ CREATE TABLE IF NOT EXISTS account (
 );
 CREATE TABLE IF NOT EXISTS settings (name TEXT PRIMARY KEY, enc INTEGER NOT NULL, blob TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS custom_services (id INTEGER PRIMARY KEY AUTOINCREMENT, pos INTEGER NOT NULL, enc INTEGER NOT NULL, blob TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS uptime (key TEXT NOT NULL, ts INTEGER NOT NULL, up INTEGER NOT NULL, ms REAL);
+CREATE INDEX IF NOT EXISTS uptime_key_ts ON uptime (key, ts);
+CREATE TABLE IF NOT EXISTS meta (name TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS scan_results (id INTEGER PRIMARY KEY AUTOINCREMENT, created TEXT NOT NULL, source TEXT NOT NULL, enc INTEGER NOT NULL, blob TEXT NOT NULL);
 """
 
@@ -256,7 +261,33 @@ class Store:
         with self.lock:
             self.db.execute("INSERT INTO scan_results (created, source, enc, blob) VALUES (?,?,?,?)",
                             (time.strftime("%Y-%m-%dT%H:%M:%S%z"), source, e, b))
-            self.db.execute("DELETE FROM scan_results WHERE id NOT IN (SELECT id FROM scan_results ORDER BY id DESC LIMIT 10)")
+            self.db.execute("DELETE FROM scan_results WHERE id NOT IN (SELECT id FROM scan_results ORDER BY id DESC LIMIT 50)")
+
+    def get_setting(self, dek, name, default=None):
+        rows = self.q("SELECT enc, blob FROM settings WHERE name=?", (name,))
+        return unseal(dek, *rows[0]) if rows else default
+
+    def set_setting(self, dek, name, obj):
+        e, b = seal(dek, obj)
+        self.q("INSERT OR REPLACE INTO settings (name, enc, blob) VALUES (?,?,?)", (name, e, b))
+
+    def meta(self, name, default=None):
+        rows = self.q("SELECT value FROM meta WHERE name=?", (name,))
+        return rows[0][0] if rows else default
+
+    def set_meta(self, name, value):
+        self.q("INSERT OR REPLACE INTO meta (name, value) VALUES (?,?)", (name, str(value)))
+
+    def scan_history(self, dek, limit=50):
+        out = []
+        for i, created, source, e, b in self.q("SELECT id, created, source, enc, blob FROM scan_results ORDER BY id DESC LIMIT ?", (limit,)):
+            try:
+                r = unseal(dek, e, b)
+                out.append({"id": i, "created": created, "source": source, "subnet": r.get("subnet"),
+                            "count": len(r.get("services", []))})
+            except Exception:
+                out.append({"id": i, "created": created, "source": source, "error": "cannot decrypt"})
+        return out
 
     def latest_scan(self, dek):
         rows = self.q("SELECT created, source, enc, blob FROM scan_results ORDER BY id DESC LIMIT 1")
@@ -392,7 +423,13 @@ class State:
         self.sessions = {}      # token -> {"exp": t, "dek": key|None}
         self.fails = {}         # ip -> [timestamps]
         self.lock = threading.Lock()
-        self.scan = {"running": False, "error": None, "started": None}
+        self.scan = {"running": False, "error": None, "started": None, "source": None}
+        # Data key for background jobs (auto-scan, uptime). Memory only; set at the first
+        # sign-in after the server starts. Plain mode needs no key.
+        self.worker = {"ready": not HAVE_CRYPTO, "dek": None}
+
+    def set_worker(self, dek):
+        self.worker = {"ready": True, "dek": dek}
 
     def new_session(self, dek):
         tok = secrets.token_urlsafe(32)
@@ -520,7 +557,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         return None
 
     def cookie(self, tok, age=SESSION_TTL):
-        return f"{COOKIE}={tok}; Path=/; HttpOnly; SameSite=Strict; Max-Age={age}"
+        secure = "; Secure" if getattr(self.server, "is_https", False) else ""
+        return f"{COOKIE}={tok}; Path=/; HttpOnly; SameSite=Strict; Max-Age={age}{secure}"
 
     # API
     def api(self, method):
@@ -574,7 +612,9 @@ def r_login(h, d):
         STATE.fail(h.ip())
         return h.send_json(401, {"error": "Invalid username or password"})
     STATE.clear_fails(h.ip())
-    tok = STATE.new_session(STATE.store.unlock(pw))
+    dek = STATE.store.unlock(pw)
+    STATE.set_worker(dek)
+    tok = STATE.new_session(dek)
     h.send_json(200, {"ok": True, "mustChange": bool(STATE.store.account()["must_change"])}, h.cookie(tok))
 
 def r_logout(h, d):
@@ -609,6 +649,7 @@ def r_credentials(h, d):
     st.set_security(q, ans)
     st.q("UPDATE account SET user=?, must_change=0 WHERE id=1", (nu,))
     s["dek"] = new_dek
+    STATE.set_worker(new_dek)
     STATE.drop_others(tok)
     h.send_json(200, {"ok": True})
 
@@ -635,7 +676,7 @@ def r_forgot_pw(h, d):
             st.q(f"DELETE FROM {t}")
         wiped = True
         log.warning("Password reset without a recoverable data key: encrypted dashboard data was cleared")
-    st.rotate(old, np, ans)
+    STATE.set_worker(st.rotate(old, np, ans))
     st.set_password(np)
     STATE.drop_others(None)
     h.send_json(200, {"ok": True, "dataCleared": wiped})
@@ -708,7 +749,39 @@ def r_import(h, d):
     STATE.store.save_saved(s["dek"], saved)
     h.send_json(200, {"ok": True})
 
-def run_scan_job(tok, subnet):
+def svc_key(x):
+    return f"{x.get('ip')}:{x.get('port')}"
+
+def known_keys(saved):
+    keys = set()
+    for k, v in saved.items():
+        if k == "_custom" or not isinstance(v, dict):
+            continue
+        if v.get("ip"):
+            keys.add(svc_key(v))
+    for c in saved.get("_custom", []):
+        if isinstance(c, dict) and c.get("ip"):
+            keys.add(svc_key(c))
+    return keys
+
+def flag_new(dek, result):
+    """Add services not on the dashboard and not dismissed to the 'New' list."""
+    st = STATE.store
+    saved = st.load_saved(dek)
+    known = known_keys(saved)
+    dismissed = set(st.get_setting(dek, "scan_dismissed", []))
+    pending = {svc_key(x): x for x in st.get_setting(dek, "scan_pending", [])}
+    added = 0
+    for x in result.get("services", []):
+        k = svc_key(x)
+        if k in known or k in dismissed or k in pending:
+            continue
+        pending[k] = dict(x, flagged_at=result.get("generated"))
+        added += 1
+    st.set_setting(dek, "scan_pending", list(pending.values()))
+    return added
+
+def run_scan_job(subnet, source="server", flag=False):
     try:
         sc = load_scanner()
         conf = sc.load_conf(os.path.join(ROOT, "scan", "scan.conf"))
@@ -719,33 +792,42 @@ def run_scan_job(tok, subnet):
         found = sc.scan(conf, hosts)
         result = {"format": "forgepanel-scan", "version": 1, "generated": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
                   "subnet": spec, "hosts_scanned": len(hosts), "services": found}
-        s = STATE.get_session(tok)
-        if not s:
-            raise ValueError("Session ended before the scan finished")
-        STATE.store.add_scan(s["dek"], result, "server")
+        if not STATE.worker["ready"]:
+            raise ValueError("Data key not available (sign in once after the server starts)")
+        dek = STATE.worker["dek"]
+        STATE.store.add_scan(dek, result, source)
+        if flag:
+            n = flag_new(dek, result)
+            log.info("Auto-scan found %d service(s), %d new", len(found), n)
         STATE.scan["error"] = None
     except Exception as e:
         log.warning("Scan failed: %s", e)
         STATE.scan["error"] = str(e)
     finally:
         STATE.scan["running"] = False
+        STATE.store.set_meta("last_scan", int(time.time()))
+
+def start_scan(subnet=None, source="server", flag=False):
+    with STATE.lock:
+        if STATE.scan["running"]:
+            return False
+        STATE.scan.update(running=True, error=None, started=time.time(), source=source)
+    threading.Thread(target=run_scan_job, args=(subnet, source, flag), daemon=True).start()
+    return True
 
 def r_scan_start(h, d):
     tok, s = h.need_session()
     if not tok:
         return
-    with STATE.lock:
-        if STATE.scan["running"]:
-            return h.send_json(409, {"error": "A scan is already running"})
-        STATE.scan.update(running=True, error=None, started=time.time())
     subnet = d.get("subnet")
-    threading.Thread(target=run_scan_job, args=(tok, str(subnet) if subnet else None), daemon=True).start()
+    if not start_scan(str(subnet) if subnet else None, "server"):
+        return h.send_json(409, {"error": "A scan is already running"})
     h.send_json(202, {"ok": True, "running": True})
 
 def r_scan_get(h, d):
     tok, s = h.need_session()
     if tok:
-        h.send_json(200, {"running": STATE.scan["running"], "error": STATE.scan["error"],
+        h.send_json(200, {"running": STATE.scan["running"], "error": STATE.scan["error"], "source": STATE.scan["source"],
                           "latest": STATE.store.latest_scan(s["dek"])})
 
 def r_scan_import(h, d):
@@ -796,7 +878,300 @@ def r_check(h, d):
         results = list(ex.map(one, items))
     h.send_json(200, {"results": results})
 
+# ── 1) scheduled scans ─────────────────────────────────────────────────────
+SCHEDULE_PRESETS = {"off": 0, "hourly": 60, "daily": 1440}
+
+def conf_schedule():
+    import configparser
+    cp = configparser.ConfigParser(inline_comment_prefixes=("#", ";"))
+    cp.read(os.path.join(ROOT, "scan", "scan.conf"))
+    mode = cp.get("schedule", "interval", fallback="off").strip().lower()
+    minutes = cp.getint("schedule", "minutes", fallback=360)
+    return normalize_schedule({"mode": mode, "minutes": minutes})
+
+def normalize_schedule(sch):
+    mode = str((sch or {}).get("mode", "off")).lower()
+    if mode not in ("off", "hourly", "daily", "custom"):
+        mode = "off"
+    try:
+        minutes = int((sch or {}).get("minutes") or 360)
+    except (TypeError, ValueError):
+        minutes = 360
+    minutes = max(5, min(minutes, 7 * 1440))
+    return {"mode": mode, "minutes": minutes,
+            "interval": SCHEDULE_PRESETS.get(mode, minutes) if mode != "custom" else minutes}
+
+def current_schedule():
+    if STATE.worker["ready"]:
+        try:
+            sch = STATE.store.get_setting(STATE.worker["dek"], "schedule")
+            if sch:
+                return normalize_schedule(sch), "dashboard"
+        except Exception:
+            pass
+    return conf_schedule(), "scan.conf"
+
+def scheduler_loop():
+    while True:
+        time.sleep(30)
+        try:
+            sch, _ = current_schedule()
+            if not sch["interval"] or not STATE.worker["ready"]:
+                continue
+            last = int(STATE.store.meta("last_auto_scan", 0))
+            if time.time() - last >= sch["interval"] * 60:
+                STATE.store.set_meta("last_auto_scan", int(time.time()))
+                start_scan(None, "auto", flag=True)
+        except Exception:
+            log.exception("scheduler")
+
+def r_schedule_get(h, d):
+    tok, s = h.need_session()
+    if tok:
+        sch, src = current_schedule()
+        last = int(STATE.store.meta("last_auto_scan", 0))
+        h.send_json(200, dict(sch, source=src, last_auto_scan=last or None,
+                              next_auto_scan=(last + sch["interval"] * 60) if sch["interval"] and last else None))
+
+def r_schedule_put(h, d):
+    tok, s = h.need_session()
+    if tok:
+        sch = normalize_schedule(d)
+        STATE.store.set_setting(s["dek"], "schedule", {"mode": sch["mode"], "minutes": sch["minutes"]})
+        if sch["interval"]:
+            STATE.store.set_meta("last_auto_scan", int(time.time()))  # first run after one interval
+        h.send_json(200, dict(sch, ok=True))
+
+def r_scan_history(h, d):
+    tok, s = h.need_session()
+    if tok:
+        h.send_json(200, {"history": STATE.store.scan_history(s["dek"])})
+
+def r_pending_get(h, d):
+    tok, s = h.need_session()
+    if not tok:
+        return
+    st = STATE.store
+    known = known_keys(st.load_saved(s["dek"]))
+    pending = [x for x in st.get_setting(s["dek"], "scan_pending", []) if svc_key(x) not in known]
+    st.set_setting(s["dek"], "scan_pending", pending)
+    h.send_json(200, {"pending": pending})
+
+def r_pending_post(h, d):
+    """action=dismiss: hide for good; action=accept: remove from list (client adds the tiles)."""
+    tok, s = h.need_session()
+    if not tok:
+        return
+    action, keys = d.get("action"), d.get("keys")
+    if action not in ("accept", "dismiss") or not isinstance(keys, list):
+        raise ValueError("action must be accept|dismiss and keys a list")
+    keys = {str(k) for k in keys}
+    st = STATE.store
+    pending = st.get_setting(s["dek"], "scan_pending", [])
+    chosen = [x for x in pending if svc_key(x) in keys]
+    st.set_setting(s["dek"], "scan_pending", [x for x in pending if svc_key(x) not in keys])
+    if action == "dismiss":
+        dismissed = set(st.get_setting(s["dek"], "scan_dismissed", [])) | {svc_key(x) for x in chosen}
+        st.set_setting(s["dek"], "scan_dismissed", sorted(dismissed))
+    h.send_json(200, {"ok": True, "services": chosen})
+
+# ── 2) uptime + response time ──────────────────────────────────────────────
+UPTIME = {"interval": 60, "retention_days": 8}
+
+def uptime_key(ip, port):
+    salt = STATE.store.meta("uptime_salt")
+    if not salt:
+        salt = secrets.token_hex(16)
+        STATE.store.set_meta("uptime_salt", salt)
+    # opaque key so the plain uptime table does not list your hosts
+    return hmac.new(salt.encode(), f"{ip}:{port}".encode(), hashlib.sha256).hexdigest()[:32]
+
+def monitor_targets():
+    if not STATE.worker["ready"]:
+        return []
+    saved = STATE.store.load_saved(STATE.worker["dek"])
+    out = {}
+    for k, v in saved.items():
+        if isinstance(v, dict) and v.get("ip") and k != "_custom":
+            out[svc_key(v)] = v
+    for c in saved.get("_custom", []):
+        if isinstance(c, dict) and c.get("ip"):
+            out[svc_key(c)] = c
+    return list(out.values())
+
+def probe_latency(c):
+    host = str(c.get("ip", "")).strip()
+    try:
+        port = int(c.get("port") or 80)
+    except (TypeError, ValueError):
+        return None
+    if not re.fullmatch(r"[A-Za-z0-9.:\-\[\]]+", host):
+        return None
+    t0 = time.monotonic()
+    r = check_service(host, port, "https" if c.get("scheme") == "https" else "http", timeout=3.0)
+    return host, port, r["online"], round((time.monotonic() - t0) * 1000, 1)
+
+def uptime_loop():
+    import concurrent.futures as cf
+    while True:
+        try:
+            targets = monitor_targets()
+            if targets:
+                now = int(time.time())
+                with cf.ThreadPoolExecutor(16) as ex:
+                    rows = [r for r in ex.map(probe_latency, targets) if r]
+                with STATE.store.lock:
+                    STATE.store.db.executemany("INSERT INTO uptime (key, ts, up, ms) VALUES (?,?,?,?)",
+                                               [(uptime_key(h_, p_), now, int(up), ms if up else None) for h_, p_, up, ms in rows])
+                    STATE.store.db.execute("DELETE FROM uptime WHERE ts < ?", (now - UPTIME["retention_days"] * 86400,))
+        except Exception:
+            log.exception("uptime checker")
+        time.sleep(UPTIME["interval"])
+
+def r_uptime(h, d):
+    tok, s = h.need_session()
+    if not tok:
+        return
+    rng = d.get("range", "24h")
+    span = {"1h": 3600, "24h": 86400, "7d": 7 * 86400}.get(rng)
+    if not span:
+        raise ValueError("range must be 1h, 24h or 7d")
+    buckets = max(10, min(int(d.get("buckets") or 48), 300))
+    items = d.get("items")
+    if not isinstance(items, list) or len(items) > 200:
+        raise ValueError("items must be a list (max 200)")
+    now = int(time.time())
+    start, width = now - span, span / buckets
+    out = []
+    for it in items:
+        key = uptime_key(str(it.get("ip", "")), it.get("port"))
+        rows = STATE.store.q("SELECT ts, up, ms FROM uptime WHERE key=? AND ts>=? ORDER BY ts", (key, start))
+        b = [{"n": 0, "up": 0, "ms": 0.0, "msn": 0} for _ in range(buckets)]
+        for ts, up, ms in rows:
+            x = b[min(buckets - 1, int((ts - start) / width))]
+            x["n"] += 1
+            x["up"] += up
+            if ms is not None:
+                x["ms"] += ms
+                x["msn"] += 1
+        series = [{"t": int(start + i * width), "up": (x["up"] / x["n"]) if x["n"] else None,
+                   "ms": round(x["ms"] / x["msn"], 1) if x["msn"] else None} for i, x in enumerate(b)]
+        total = len(rows)
+        ups = sum(r[1] for r in rows)
+        last = rows[-1] if rows else None
+        out.append({"uptime": round(100 * ups / total, 2) if total else None, "samples": total,
+                    "last": {"ts": last[0], "up": bool(last[1]), "ms": last[2]} if last else None, "series": series})
+    h.send_json(200, {"range": rng, "interval": UPTIME["interval"], "results": out})
+
+# ── 5) server stats from /proc ─────────────────────────────────────────────
+STATS = {"history": [], "prev_cpu": None, "prev_net": None, "prev_t": None}
+
+def _read(path):
+    try:
+        with open(path) as fh:
+            return fh.read()
+    except OSError:
+        return ""
+
+def sample_stats():
+    now = time.time()
+    cpu_pct = None
+    line = _read("/proc/stat").split("\n", 1)[0].split()
+    if line and line[0] == "cpu":
+        vals = [int(x) for x in line[1:]]
+        idle, total = vals[3] + (vals[4] if len(vals) > 4 else 0), sum(vals)
+        if STATS["prev_cpu"]:
+            di, dt = idle - STATS["prev_cpu"][0], total - STATS["prev_cpu"][1]
+            cpu_pct = round(100 * (1 - di / dt), 1) if dt > 0 else 0.0
+        STATS["prev_cpu"] = (idle, total)
+    mem = {}
+    for l in _read("/proc/meminfo").splitlines():
+        k, _, v = l.partition(":")
+        if v.strip():
+            mem[k] = int(v.split()[0]) * 1024
+    mem_total = mem.get("MemTotal", 0)
+    mem_used = mem_total - mem.get("MemAvailable", mem.get("MemFree", 0))
+    rx = tx = 0
+    for l in _read("/proc/net/dev").splitlines()[2:]:
+        name, _, rest = l.partition(":")
+        f = rest.split()
+        if name.strip() != "lo" and len(f) >= 9:
+            rx += int(f[0]); tx += int(f[8])
+    rx_rate = tx_rate = None
+    if STATS["prev_net"] and STATS["prev_t"]:
+        dt = now - STATS["prev_t"]
+        if dt > 0:
+            rx_rate = max(0, round((rx - STATS["prev_net"][0]) / dt))
+            tx_rate = max(0, round((tx - STATS["prev_net"][1]) / dt))
+    STATS["prev_net"], STATS["prev_t"] = (rx, tx), now
+    try:
+        du = shutil.disk_usage(ROOT)
+        disk = {"total": du.total, "used": du.used, "free": du.free, "pct": round(100 * du.used / du.total, 1)}
+    except OSError:
+        disk = None
+    try:
+        load = [round(x, 2) for x in os.getloadavg()]
+    except OSError:
+        load = None
+    up = _read("/proc/uptime").split()
+    snap = {"t": int(now), "cpu": cpu_pct, "cores": os.cpu_count(),
+            "mem": {"total": mem_total, "used": mem_used, "pct": round(100 * mem_used / mem_total, 1) if mem_total else None},
+            "disk": disk, "load": load, "uptime": int(float(up[0])) if up else None,
+            "net": {"rx_total": rx, "tx_total": tx, "rx_rate": rx_rate, "tx_rate": tx_rate}}
+    STATS["history"] = (STATS["history"] + [snap])[-120:]
+    return snap
+
+def stats_loop():
+    while True:
+        try:
+            sample_stats()
+        except Exception:
+            log.exception("stats")
+        time.sleep(5)
+
+def r_stats(h, d):
+    tok, s = h.need_session()
+    if tok:
+        hist = STATS["history"] or [sample_stats()]
+        h.send_json(200, {"current": hist[-1], "history": [
+            {"t": x["t"], "cpu": x["cpu"], "mem": x["mem"]["pct"], "rx": x["net"]["rx_rate"], "tx": x["net"]["tx_rate"]} for x in hist]})
+
+# ── 3) HTTPS ───────────────────────────────────────────────────────────────
+def ensure_cert(cert, key):
+    if os.path.exists(cert) and os.path.exists(key):
+        return
+    if not shutil.which("openssl"):
+        sys.exit("--https needs a certificate. Install openssl or pass --cert/--key.")
+    os.makedirs(os.path.dirname(cert), mode=0o700, exist_ok=True)
+    host = socket.gethostname()
+    ips = {"127.0.0.1"}
+    try:
+        s_ = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s_.connect(("192.0.2.1", 80))
+        ips.add(s_.getsockname()[0])
+        s_.close()
+    except OSError:
+        pass
+    san = ",".join([f"DNS:{host}", "DNS:localhost"] + [f"IP:{i}" for i in sorted(ips)])
+    old = os.umask(0o077)
+    try:
+        subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-sha256", "-days", "825",
+                        "-keyout", key, "-out", cert, "-subj", f"/CN={host}", "-addext", f"subjectAltName={san}"],
+                       check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    finally:
+        os.umask(old)
+    os.chmod(key, 0o600)
+    os.chmod(cert, 0o644)
+    log.info("Generated self-signed certificate %s (%s)", cert, san)
+
 ROUTES = {
+    ("GET", "/api/schedule"): r_schedule_get,
+    ("PUT", "/api/schedule"): r_schedule_put,
+    ("GET", "/api/scan/history"): r_scan_history,
+    ("GET", "/api/scan/pending"): r_pending_get,
+    ("POST", "/api/scan/pending"): r_pending_post,
+    ("POST", "/api/uptime"): r_uptime,
+    ("GET", "/api/stats"): r_stats,
     ("POST", "/api/check"): r_check,
     ("GET", "/api/status"): r_status,
     ("POST", "/api/login"): r_login,
@@ -822,14 +1197,38 @@ def main():
     ap.add_argument("--port", type=int, default=8084)
     ap.add_argument("--host", default="0.0.0.0")
     ap.add_argument("--db", default=DEFAULT_DB)
+    ap.add_argument("--https", action="store_true", help="serve HTTPS (self-signed cert generated in database/certs/ if missing)")
+    ap.add_argument("--cert", help="certificate file (default database/certs/server.crt)")
+    ap.add_argument("--key", help="private key file (default database/certs/server.key)")
+    ap.add_argument("--uptime-interval", type=int, default=60, help="seconds between uptime checks (default 60)")
+    ap.add_argument("--uptime-retention", type=int, default=8, help="days of uptime history to keep (default 8)")
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     if not HAVE_CRYPTO:
         log.warning("Python 'cryptography' not installed: dashboard data and scan results are stored "
                     "UNENCRYPTED in %s. Install python3-cryptography to enable encryption at rest.", args.db)
-    STATE = State(Store(os.path.abspath(args.db)))
+    db = os.path.abspath(args.db)
+    STATE = State(Store(db))
+    UPTIME["interval"] = max(10, args.uptime_interval)
+    UPTIME["retention_days"] = max(1, args.uptime_retention)
     srv = http.server.ThreadingHTTPServer((args.host, args.port), Handler)
-    log.info("ForgePanel on http://%s:%d (database: %s)", args.host, args.port, args.db)
+    srv.is_https = False
+    if args.https:
+        certdir = os.path.join(os.path.dirname(db), "certs")
+        cert = os.path.abspath(args.cert or os.path.join(certdir, "server.crt"))
+        key = os.path.abspath(args.key or os.path.join(certdir, "server.key"))
+        ensure_cert(cert, key)
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+        ctx.load_cert_chain(cert, key)
+        # handshake in the handler thread, so a slow client cannot block accept()
+        srv.socket = ctx.wrap_socket(srv.socket, server_side=True, do_handshake_on_connect=False)
+        srv.is_https = True
+    for fn in (scheduler_loop, uptime_loop, stats_loop):
+        threading.Thread(target=fn, daemon=True, name=fn.__name__).start()
+    log.info("ForgePanel on %s://%s:%d (database: %s)", "https" if srv.is_https else "http", args.host, args.port, db)
+    if HAVE_CRYPTO:
+        log.info("Auto-scans and uptime checks start after the first sign-in (the data key lives in memory only)")
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

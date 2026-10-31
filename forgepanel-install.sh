@@ -78,11 +78,11 @@ install_requirements() {
   info "Installing required packages..."
   # python3 incl. the sqlite3 module, git, curl
   case "$PKG" in
-    apt)    pkg_install python3 git curl ca-certificates libsqlite3-0 ;;
-    dnf)    pkg_install python3 python3-libs git curl sqlite-libs ;;
-    pacman) pkg_install python git curl sqlite ;;
-    zypper) pkg_install python3 git curl libsqlite3-0 ;;
-    apk)    pkg_install python3 git curl sqlite-libs ;;
+    apt)    pkg_install python3 git curl ca-certificates libsqlite3-0 openssl ;;
+    dnf)    pkg_install python3 python3-libs git curl sqlite-libs openssl ;;
+    pacman) pkg_install python git curl sqlite openssl ;;
+    zypper) pkg_install python3 git curl libsqlite3-0 openssl ;;
+    apk)    pkg_install python3 git curl sqlite-libs openssl ;;
   esac || die "Could not install required packages."
 
   info "Installing optional python3 cryptography (encryption at rest)..."
@@ -108,6 +108,11 @@ ask_user() {
   echo
   prompt INSTALL_DIR "Install directory" "$DEFAULT_DIR"
   prompt PORT "Port to listen on" "$DEFAULT_PORT"
+
+  HTTPS_FLAG=""
+  if ask_yn "Serve over HTTPS with a self-signed certificate (database/certs/)?"; then
+    HTTPS_FLAG=" --https"
+  fi
 
   [[ "$PORT" =~ ^[0-9]+$ ]] || die "Port must be a number."
   (( PORT >= 1 && PORT <= 65535 )) || die "Port out of range."
@@ -168,7 +173,7 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=$INSTALL_DIR
-ExecStart=$python $INSTALL_DIR/server.py --port $PORT --host 0.0.0.0
+ExecStart=$python $INSTALL_DIR/server.py --port $PORT --host 0.0.0.0$HTTPS_FLAG
 Restart=on-failure
 RestartSec=3
 User=$USER
@@ -188,7 +193,7 @@ UNIT
 #!/sbin/openrc-run
 description="ForgePanel Dashboard"
 command="$python"
-command_args="$INSTALL_DIR/server.py --port $PORT --host 0.0.0.0"
+command_args="$INSTALL_DIR/server.py --port $PORT --host 0.0.0.0$HTTPS_FLAG"
 command_user="$USER"
 directory="$INSTALL_DIR"
 umask=077
@@ -202,7 +207,7 @@ OPENRC
   else
     warn "No systemd or OpenRC detected. Starting in background..."
     pkill -f "$INSTALL_DIR/server.py" 2>/dev/null || true
-    (cd "$INSTALL_DIR" && umask 077 && nohup "$python" server.py --port "$PORT" --host 0.0.0.0 >>"$INSTALL_DIR/database/server.log" 2>&1 &)
+    (cd "$INSTALL_DIR" && umask 077 && nohup "$python" server.py --port "$PORT" --host 0.0.0.0 $HTTPS_FLAG >>"$INSTALL_DIR/database/server.log" 2>&1 &)
     ok "Started in background (log: $INSTALL_DIR/database/server.log)."
   fi
 }
@@ -324,7 +329,10 @@ main() {
       echo
       ok "Done in $(elapsed)"
       echo
-      echo "  Open:  http://${ip:-localhost}:$PORT"
+      local scheme="http"
+      [[ -n "$HTTPS_FLAG" ]] && scheme="https"
+      echo "  Open:  $scheme://${ip:-localhost}:$PORT"
+      [[ -n "$HTTPS_FLAG" ]] && echo "  HTTPS: self-signed cert in $INSTALL_DIR/database/certs/ (see README: trusting the certificate)"
       echo "  Files: $INSTALL_DIR"
       echo "  Database: $INSTALL_DIR/database/forgepanel.db (back this folder up)"
       echo

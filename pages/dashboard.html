@@ -135,6 +135,56 @@
     width: 100%; margin-bottom: 1rem; background: #0e0e0e; border: 1px solid var(--border);
     color: var(--text); border-radius: 6px; padding: 0.5rem; font-size: 0.85rem; display: none;
   }
+  .toolbar { display:flex; gap:0.5rem; justify-content:center; flex-wrap:wrap; margin-bottom:1rem; align-items:center; }
+  .tbtn, .toolbar select {
+    background:transparent; border:1px solid var(--border); color:var(--text); border-radius:8px;
+    padding:0.45rem 1rem; cursor:pointer; font-size:0.8rem; font-family:inherit; position:relative;
+  }
+  .toolbar select { background:#111; padding:0.42rem 0.6rem; }
+  .tbtn:hover { border-color: var(--cyan); }
+  .badge { display:none; position:absolute; top:-7px; right:-7px; background:var(--red); color:#000; font-weight:600;
+    border-radius:999px; font-size:0.65rem; min-width:18px; height:18px; line-height:18px; padding:0 4px; }
+  .badge.show { display:inline-block; }
+  .tbtn.alert { border-color: var(--red); color: var(--red); }
+  .group { max-width:1200px; margin:0 auto 1.4rem; }
+  .group-head { display:flex; align-items:center; gap:0.5rem; margin-bottom:0.6rem; padding:0.3rem 0.2rem;
+    border-bottom:1px solid var(--border); }
+  .group-head .gname { font-weight:600; font-size:0.9rem; flex:1; }
+  .group-head .gcount { color:var(--muted); font-size:0.75rem; }
+  .group-head button { background:transparent; border:none; color:var(--muted); cursor:pointer; font-size:0.75rem; padding:0.2rem 0.4rem; }
+  .group-head button:hover { color:var(--text); }
+  .group.collapsed .grid { display:none; }
+  .group.drop-target .group-head { border-bottom-color: var(--cyan); }
+  .grid.empty { min-height:70px; border:1px dashed var(--border); border-radius:12px; }
+  .handle { cursor:grab; color:var(--muted); font-size:0.9rem; user-select:none; padding:0 0.3rem; }
+  .handle:hover { color:var(--cyan); }
+  .card.dragging { opacity:0.35; }
+  .card.drop-before { box-shadow: -4px 0 0 var(--cyan); }
+  .spark { display:flex; align-items:center; gap:0.5rem; cursor:pointer; min-height:22px; }
+  .spark svg { flex:1; height:22px; }
+  .spark .pct { font-size:0.7rem; color:var(--muted); font-family:ui-monospace, monospace; min-width:52px; text-align:right; }
+  .overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:90; align-items:center; justify-content:center; }
+  .overlay.show { display:flex; }
+  .panel { background:#141414; border:1px solid var(--border); border-radius:12px; padding:1.3rem; width:min(720px, 94vw);
+    max-height:86vh; overflow:auto; }
+  .panel h3 { font-size:1.05rem; margin-bottom:0.4rem; display:flex; justify-content:space-between; align-items:center; }
+  .panel .sub { color:var(--muted); font-size:0.8rem; margin-bottom:0.8rem; }
+  .panel .row { display:flex; gap:0.5rem; align-items:center; padding:0.5rem 0; border-bottom:1px solid var(--border); font-size:0.82rem; }
+  .panel .row .grow { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; }
+  .panel .tag { font-size:0.68rem; padding:0.1rem 0.4rem; border-radius:999px; border:1px solid var(--cyan); color:var(--cyan); }
+  .panel .tag.new { border-color:var(--red); color:var(--red); }
+  .seg { display:flex; gap:0.3rem; }
+  .seg button, .panel .btn { flex:none; }
+  .seg button.on { border-color:var(--cyan); color:var(--cyan); }
+  #stats { max-width:1200px; margin:0 auto 1.2rem; display:none; grid-template-columns:repeat(auto-fill, minmax(180px, 1fr)); gap:0.7rem; }
+  #stats.show { display:grid; }
+  .stat { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:0.8rem; }
+  .stat .label { color:var(--muted); font-size:0.72rem; text-transform:uppercase; letter-spacing:0.04em; }
+  .stat .val { font-size:1.15rem; font-weight:600; margin:0.2rem 0; font-family:ui-monospace, monospace; }
+  .stat .small { color:var(--muted); font-size:0.72rem; }
+  .stat svg { width:100%; height:30px; display:block; margin-top:0.3rem; }
+  .bar { height:6px; background:#222; border-radius:3px; overflow:hidden; margin-top:0.35rem; }
+  .bar > div { height:100%; background:var(--cyan); }
   #scan-status { text-align:center; color: var(--muted); font-size: 0.8rem; min-height: 1.1em; margin-bottom: 0.8rem; }
 </style>
 <link rel="stylesheet" href="../css/main.css">
@@ -147,11 +197,21 @@
     <h1 style="font-size:1.35rem; font-weight:600; letter-spacing:-0.02em;">ForgePanel</h1>
     <p style="color:var(--muted); margin-top:0.15rem; font-size:0.8rem;">Service dashboard</p>
   </header>
-  <div style="text-align:center; margin-bottom:1rem;">
-    <button onclick="addCustom()" style="background:transparent; border:1px solid var(--border); color:var(--text); border-radius:8px; padding:0.45rem 1rem; cursor:pointer; font-size:0.8rem; font-family:inherit;">Add service</button>
+  <div class="toolbar">
+    <button class="tbtn" onclick="addCustom()">Add service</button>
+    <button class="tbtn" onclick="addGroup()" title="Create a group, then drag tiles into it">Add group</button>
+    <button class="tbtn" id="stats-btn" onclick="toggleStats()" title="CPU, RAM, disk and network of the ForgePanel server">Server stats</button>
+    <button class="tbtn" id="new-btn" onclick="openNew()" title="Services found by automatic scans">New<span class="badge" id="new-badge"></span></button>
+    <select id="schedule" onchange="setSchedule(this.value)" title="Automatic network scans">
+      <option value="off">Auto-scan: off</option>
+      <option value="hourly">Auto-scan: hourly</option>
+      <option value="daily">Auto-scan: daily</option>
+      <option value="custom">Auto-scan: custom…</option>
+    </select>
   </div>
+  <div id="stats"></div>
   <div id="scan-status"></div>
-  <div class="grid" id="grid"></div>
+  <div id="groups"></div>
 </div>
 
 <div id="settings">
@@ -166,7 +226,30 @@
   <button onclick="logout()">Log Out</button>
 </div>
 
-<div id="modal">
+<div id="detail" class="overlay" onclick="if (event.target === this) closeOverlay('detail')">
+  <div class="panel">
+    <h3><span id="detail-title"></span><button class="btn" onclick="closeOverlay('detail')">Close</button></h3>
+    <div class="sub" id="detail-sub"></div>
+    <div class="seg" style="margin-bottom:0.8rem;">
+      <button class="btn" id="rng-24h" onclick="loadDetail('24h')">24h</button>
+      <button class="btn" id="rng-7d" onclick="loadDetail('7d')">7d</button>
+    </div>
+    <div id="detail-graph"></div>
+  </div>
+</div>
+
+<div id="newpanel" class="overlay" onclick="if (event.target === this) closeOverlay('newpanel')">
+  <div class="panel">
+    <h3><span>New services</span><button class="btn" onclick="closeOverlay('newpanel')">Close</button></h3>
+    <div class="sub" id="new-sub"></div>
+    <div id="new-list"></div>
+    <div class="actions" style="margin:0.8rem 0 1.2rem;" id="new-all"></div>
+    <h3 style="font-size:0.9rem;">Scan history</h3>
+    <div id="history"></div>
+  </div>
+</div>
+
+<div id="modal" style="z-index:100;">
   <div class="box">
     <h3 id="modal-title">Confirm</h3>
     <p id="modal-msg"></p>
@@ -199,12 +282,13 @@ const services = [
 ];
 
 let modalResolve = null;
-function showModal(title, msg, okText, danger, askPassword) {
+function showModal(title, msg, okText, danger, askPassword, inputType, initial) {
   return new Promise(resolve => {
     document.getElementById("modal-title").textContent = title;
     document.getElementById("modal-msg").textContent = msg;
     const inp = document.getElementById("modal-input");
-    inp.value = "";
+    inp.value = initial || "";
+    inp.type = inputType || "password";
     inp.style.display = askPassword ? "block" : "none";
     inp.placeholder = askPassword || "";
     const okBtn = document.getElementById("modal-ok");
@@ -227,6 +311,7 @@ document.getElementById("modal-ok").onclick = () => closeModal(true);
 document.getElementById("modal-cancel").onclick = () => closeModal(false);
 document.getElementById("modal-input").addEventListener("keydown", e => { if (e.key === "Enter") closeModal(true); });
 const askPassword = (title, msg) => showModal(title, msg, "OK", false, "Password");
+const askText = (title, msg, placeholder, initial) => showModal(title, msg, "OK", false, placeholder, "text", initial);
 
 function handleAuthError(e) {
   if (e && (e.status === 401 || (e.status === 403 && e.data && e.data.mustChange))) { location.href = "login.html"; return true; }
@@ -235,8 +320,11 @@ function handleAuthError(e) {
 
 async function loadData() {
   const r = await api("data");
-  return r.saved || {};
+  const d = r.saved || {};
+  (d._custom || []).forEach(c => { if (!c.id) c.id = newId(); });
+  return d;
 }
+function newId() { return Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4); }
 
 async function persist() {
   try { await api("data", "PUT", { saved }); }
@@ -245,13 +333,14 @@ async function persist() {
 
 function getAllServices() {
   const customs = saved._custom || [];
-  return services.concat(customs.map((c, i) => ({
+  return services.map(s => ({ ...s, key: "o:" + s.name })).concat(customs.map((c, i) => ({
     name: c.name || "Custom " + (i+1),
     desc: c.desc || "Custom service",
     port: c.port || 80,
     logo: c.logo || "../assets/icons/npm.png",
     custom: true,
-    customIndex: i
+    customIndex: i,
+    key: "c:" + (c.id || (c.id = newId()))
   })));
 }
 
@@ -279,24 +368,46 @@ function urlFor(s) {
   return `${proto}://${host}${port}`;
 }
 
-function render() {
+// ── layout: groups + order (saved._layout, stored encrypted in SQLite) ──
+function layout() {
+  const L = saved._layout && typeof saved._layout === "object" ? saved._layout : {};
+  L.groups = Array.isArray(L.groups) ? L.groups : [];
+  L.ungrouped = Array.isArray(L.ungrouped) ? L.ungrouped : [];
+  saved._layout = L;
+  return L;
+}
+
+function sections() {
+  const L = layout();
   const all = getAllServices();
-  const grid = document.getElementById("grid");
-  grid.innerHTML = all.map((s, i) => {
-    const c = cfgFor(s);
-    const logoSrc = safeImgSrc(c.logo || s.logo, "../assets/icons/npm.png");
-    const name = escapeHtml(s.name);
-    return `
-      <div class="card" style="animation-delay:${i * 35}ms">
+  const byKey = new Map(all.map((s, i) => [s.key, i]));
+  const used = new Set();
+  const pick = keys => keys.filter(k => byKey.has(k) && !used.has(k) && used.add(k)).map(k => byKey.get(k));
+  const groups = L.groups.map(g => ({ g, items: pick(Array.isArray(g.items) ? g.items : []) }));
+  const ung = pick(L.ungrouped).concat(all.map((s, i) => i).filter(i => !used.has(all[i].key)));
+  return { all, groups, ung };
+}
+
+function cardHtml(s, i) {
+  const c = cfgFor(s);
+  const logoSrc = safeImgSrc(c.logo || s.logo, "../assets/icons/npm.png");
+  const name = escapeHtml(s.name);
+  return `
+      <div class="card" style="animation-delay:${i * 25}ms" id="card-${i}" data-key="${escapeHtml(s.key)}"
+           ondragover="dragOver(event)" ondrop="dropOnCard(event, '${escapeHtml(s.key)}')">
         <div class="card-header">
           <div class="icon" onclick="document.getElementById('file-${i}').click()" title="Change logo">
             <img src="${escapeHtml(logoSrc)}" alt="${name}" id="img-${i}">
           </div>
+          <span style="flex:1"></span>
+          <span class="handle" draggable="true" title="Drag to reorder or move to a group"
+                ondragstart="dragTile(event, '${escapeHtml(s.key)}', ${i})" ondragend="dragEnd()">&#8942;&#8942;</span>
           <div class="status" id="status-${i}"></div>
           <input type="file" id="file-${i}" accept="image/*" onchange="changeLogo(${i}, this)">
         </div>
         <div class="name">${s.custom ? `<input id="name-${i}" value="${name}" placeholder="Service name" style="background:transparent; border:none; color:inherit; font-weight:600; font-size:1rem; width:100%;">` : name}</div>
         <div class="desc">${escapeHtml(s.desc)}</div>
+        <div class="spark" id="spark-${i}" onclick="openDetail(${i})" title="Uptime and response time (click for details)"></div>
         <div class="fields">
           <input id="ip-${i}" placeholder="IP or hostname" value="${escapeHtml(c.ip || "")}">
           <input id="port-${i}" placeholder="Port" value="${escapeHtml(c.port || s.port)}">
@@ -306,10 +417,158 @@ function render() {
           <button class="btn primary" onclick="openService(${i})">Open</button>
           ${s.custom ? `<button class="btn" style="border-color:var(--red); color:var(--red);" onclick="deleteCustom(${s.customIndex})">Delete</button>` : ""}
         </div>
-      </div>
-    `;
-  }).join("");
+      </div>`;
 }
+
+function groupHtml(id, name, collapsed, items, all, isDefault) {
+  const gid = escapeHtml(id);
+  return `
+    <section class="group${collapsed ? " collapsed" : ""}" data-gid="${gid}">
+      <div class="group-head" ondragover="dragOver(event)" ondrop="dropOnGroup(event, '${gid}')">
+        ${isDefault ? "" : `<span class="handle" draggable="true" title="Drag to reorder groups" ondragstart="dragGroup(event, '${gid}')" ondragend="dragEnd()">&#8942;&#8942;</span>`}
+        <button onclick="toggleGroup('${gid}')" title="Collapse / expand">${collapsed ? "&#9656;" : "&#9662;"}</button>
+        <span class="gname">${escapeHtml(name)}</span>
+        <span class="gcount">${items.length}</span>
+        ${isDefault ? "" : `<button onclick="renameGroup('${gid}')">Rename</button><button onclick="deleteGroup('${gid}')" style="color:var(--red)">Delete</button>`}
+      </div>
+      <div class="grid${items.length ? "" : " empty"}" ondragover="dragOver(event)" ondrop="dropOnGroup(event, '${gid}')">
+        ${items.map(i => cardHtml(all[i], i)).join("")}
+      </div>
+    </section>`;
+}
+
+function render() {
+  const { all, groups, ung } = sections();
+  const L = layout();
+  const parts = groups.map(({ g, items }) => groupHtml(g.id, g.name || "Group", !!g.collapsed, items, all, false));
+  if (ung.length || !groups.length) parts.push(groupHtml("_ungrouped", groups.length ? "Ungrouped" : "Services", !!L.ungroupedCollapsed, ung, all, true));
+  document.getElementById("groups").innerHTML = parts.join("");
+  refreshUptime();
+}
+
+// drag and drop
+let drag = null;
+function dragTile(e, key, i) {
+  drag = { type: "tile", key };
+  e.dataTransfer.effectAllowed = "move";
+  e.dataTransfer.setData("text/plain", key);
+  const card = document.getElementById(`card-${i}`);
+  if (card) { card.classList.add("dragging"); try { e.dataTransfer.setDragImage(card, 20, 20); } catch {} }
+}
+function dragGroup(e, gid) {
+  drag = { type: "group", gid };
+  e.dataTransfer.effectAllowed = "move";
+  e.dataTransfer.setData("text/plain", gid);
+}
+function dragEnd() { drag = null; document.querySelectorAll(".dragging").forEach(x => x.classList.remove("dragging")); }
+function dragOver(e) { if (drag) e.preventDefault(); }
+
+function removeKey(key) {
+  const L = layout();
+  L.ungrouped = L.ungrouped.filter(k => k !== key);
+  L.groups.forEach(g => g.items = (g.items || []).filter(k => k !== key));
+}
+function listFor(gid) {
+  const L = layout();
+  if (gid === "_ungrouped") return L.ungrouped;
+  const g = L.groups.find(x => x.id === gid);
+  if (!g) return null;
+  g.items = g.items || [];
+  return g.items;
+}
+function currentOrder() {
+  // write the rendered order back so implicit (not yet saved) positions are kept
+  const L = layout();
+  const { all, groups, ung } = sections();
+  groups.forEach(({ g, items }) => g.items = items.map(i => all[i].key));
+  L.ungrouped = ung.map(i => all[i].key);
+}
+async function dropOnCard(e, targetKey) {
+  e.preventDefault(); e.stopPropagation();
+  if (!drag) return;
+  if (drag.type === "group") { const sec = e.target.closest(".group"); if (sec) return dropOnGroup(e, sec.dataset.gid); return; }
+  if (drag.key === targetKey) return dragEnd();
+  currentOrder();
+  const sec = e.target.closest(".group");
+  const list = listFor(sec ? sec.dataset.gid : "_ungrouped");
+  if (!list) return;
+  const key = drag.key;
+  removeKey(key);
+  const idx = list.indexOf(targetKey);
+  list.splice(idx < 0 ? list.length : idx, 0, key);
+  dragEnd();
+  await persist(); render(); checkAll();
+}
+async function dropOnGroup(e, gid) {
+  e.preventDefault(); e.stopPropagation();
+  if (!drag) return;
+  const L = layout();
+  if (drag.type === "group") {
+    const from = L.groups.findIndex(g => g.id === drag.gid);
+    let to = gid === "_ungrouped" ? L.groups.length : L.groups.findIndex(g => g.id === gid);
+    if (from < 0 || to < 0 || from === to) return dragEnd();
+    const [g] = L.groups.splice(from, 1);
+    L.groups.splice(to, 0, g);
+  } else {
+    currentOrder();
+    const list = listFor(gid);
+    if (!list) return;
+    removeKey(drag.key);
+    list.push(drag.key);
+  }
+  dragEnd();
+  await persist(); render(); checkAll();
+}
+
+async function addGroup() {
+  const name = await askText("New Group", "Name the group, then drag tiles into it.", "Group name");
+  if (!name || !name.trim()) return;
+  layout().groups.push({ id: "g" + newId(), name: name.trim().slice(0, 60), collapsed: false, items: [] });
+  await persist(); render(); checkAll();
+}
+async function renameGroup(gid) {
+  const g = layout().groups.find(x => x.id === gid);
+  if (!g) return;
+  const name = await askText("Rename Group", "New name for this group.", "Group name", g.name);
+  if (!name || !name.trim()) return;
+  g.name = name.trim().slice(0, 60);
+  await persist(); render(); checkAll();
+}
+async function deleteGroup(gid) {
+  const L = layout();
+  const g = L.groups.find(x => x.id === gid);
+  if (!g || !await showModal("Delete Group", `Delete "${g.name}"? Its tiles move to Ungrouped.`, "Delete", true)) return;
+  currentOrder();
+  L.ungrouped = L.ungrouped.concat(g.items || []);
+  L.groups = L.groups.filter(x => x.id !== gid);
+  await persist(); render(); checkAll();
+}
+async function toggleGroup(gid) {
+  const L = layout();
+  if (gid === "_ungrouped") L.ungroupedCollapsed = !L.ungroupedCollapsed;
+  else { const g = L.groups.find(x => x.id === gid); if (g) g.collapsed = !g.collapsed; }
+  await persist(); render(); checkAll();
+}
+
+// ── SVG charts (no external libraries) ──
+function sparkSvg(values, opts = {}) {
+  const w = opts.w || 200, h = opts.h || 30, color = opts.color || "var(--cyan)";
+  const nums = values.filter(v => v != null);
+  if (!nums.length) return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none"><line x1="0" y1="${h - 1}" x2="${w}" y2="${h - 1}" stroke="#2a2a2a"/></svg>`;
+  const max = opts.max != null ? opts.max : Math.max(...nums) || 1;
+  const step = values.length > 1 ? w / (values.length - 1) : w;
+  let d = "", pen = false;
+  values.forEach((v, k) => {
+    if (v == null) { pen = false; return; }
+    const x = (k * step).toFixed(1), y = (h - 2 - (Math.min(v, max) / max) * (h - 4)).toFixed(1);
+    d += (pen ? "L" : "M") + x + " " + y + " ";
+    pen = true;
+  });
+  const marks = (opts.down || []).map((dn, k) => dn ? `<rect x="${(k * step - 1).toFixed(1)}" y="0" width="2" height="${h}" fill="var(--red)" opacity="0.8"/>` : "").join("");
+  return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">${marks}<path d="${d}" fill="none" stroke="${color}" stroke-width="1.5" vector-effect="non-scaling-stroke"/></svg>`;
+}
+
+function fmtPct(v) { return v == null ? "–" : (v >= 99.995 ? "100%" : v.toFixed(v >= 99 ? 2 : 1) + "%"); }
 
 async function changeLogo(i, input) {
   const file = input.files[0];
@@ -403,7 +662,7 @@ function checkAll() { return checkMany(getAllServices().map((_, i) => i)); }
 
 async function addCustom() {
   if (!saved._custom) saved._custom = [];
-  saved._custom.push({ name: "", desc: "Custom service", port: 80, ip: "", logo: null });
+  saved._custom.push({ id: newId(), name: "", desc: "Custom service", port: 80, ip: "", logo: null });
   await persist();
   render();
 }
@@ -533,7 +792,7 @@ async function applyScan(data) {
     } else {
       const name = off ? `${off} (${ip})` : scanText(f.name || `Service :${port}`, 60);
       const desc = f.title ? `Found by scan: ${scanText(f.title, 80)}` : "Found by network scan";
-      saved._custom.push({ name, desc, port, ip, scheme, logo: null, source: "scan",
+      saved._custom.push({ id: newId(), name, desc, port, ip, scheme, logo: null, source: "scan",
         found_at: scanText(foundAt, 40) || null, matched_by: scanText(f.identified_by, 20) || null });
       addedCustom++;
     }
@@ -543,6 +802,171 @@ async function applyScan(data) {
   render();
   checkAll();
   await showModal("Scan Imported", `${found.length} service(s) in scan: ${addedOfficial} official tile(s) filled, ${addedCustom} custom service(s) added, ${skipped} duplicate(s) skipped.`, "OK");
+}
+
+// ── uptime sparklines + detail view ──
+async function refreshUptime() {
+  const all = getAllServices();
+  const idx = all.map((s, i) => i).filter(i => cfgFor(all[i]).ip);
+  if (!idx.length) return;
+  let res;
+  try { res = (await api("uptime", "POST", { range: "24h", buckets: 48, items: idx.map(i => ({ ip: cfgFor(all[i]).ip, port: cfgFor(all[i]).port })) })).results; }
+  catch (e) { handleAuthError(e); return; }
+  idx.forEach((i, k) => {
+    const el = document.getElementById(`spark-${i}`);
+    const r = res[k];
+    if (!el || !r) return;
+    el.innerHTML = sparkSvg(r.series.map(p => p.ms), { down: r.series.map(p => p.up != null && p.up < 1), h: 22 }) +
+      `<span class="pct">${r.samples ? escapeHtml(fmtPct(r.uptime)) : "no data"}</span>`;
+  });
+}
+
+let detailIdx = null;
+function openDetail(i) {
+  detailIdx = i;
+  document.getElementById("detail").classList.add("show");
+  loadDetail("24h");
+}
+function closeOverlay(id) { document.getElementById(id).classList.remove("show"); }
+
+async function loadDetail(range) {
+  const s = getAllServices()[detailIdx];
+  if (!s) return;
+  const c = cfgFor(s);
+  document.getElementById("detail-title").textContent = s.name;
+  document.getElementById("rng-24h").classList.toggle("on", range === "24h");
+  document.getElementById("rng-7d").classList.toggle("on", range === "7d");
+  const g = document.getElementById("detail-graph");
+  if (!c.ip) { document.getElementById("detail-sub").textContent = "Set an IP or hostname first."; g.innerHTML = ""; return; }
+  let r, every = 60;
+  try { const resp = await api("uptime", "POST", { range, buckets: range === "24h" ? 96 : 168, items: [{ ip: c.ip, port: c.port }] }); r = resp.results[0]; every = resp.interval; }
+  catch (e) { if (!handleAuthError(e)) g.textContent = e.message; return; }
+  const ms = r.series.map(p => p.ms).filter(v => v != null);
+  const avg = ms.length ? (ms.reduce((a, b) => a + b, 0) / ms.length).toFixed(0) : "–";
+  document.getElementById("detail-sub").textContent =
+    `${urlFor(s)} · uptime ${fmtPct(r.uptime)} · avg ${avg} ms · ${r.samples} checks` + (r.last ? ` · last ${r.last.up ? "up" : "DOWN"} ${new Date(r.last.ts * 1000).toLocaleTimeString()}` : "");
+  const W = 660, H = 170, max = Math.max(...ms, 1);
+  const step = W / Math.max(1, r.series.length - 1);
+  let d = "", pen = false;
+  r.series.forEach((p, k) => {
+    if (p.ms == null) { pen = false; return; }
+    d += (pen ? "L" : "M") + (k * step).toFixed(1) + " " + (H - 20 - (p.ms / max) * (H - 30)).toFixed(1) + " ";
+    pen = true;
+  });
+  const down = r.series.map((p, k) => p.up != null && p.up < 1 ? `<rect x="${(k * step - step / 2).toFixed(1)}" y="0" width="${Math.max(2, step).toFixed(1)}" height="${H - 18}" fill="var(--red)" opacity="${(1 - p.up) * 0.7 + 0.2}"/>` : "").join("");
+  const first = r.series[0], last = r.series[r.series.length - 1];
+  const lbl = t => new Date(t * 1000)[range === "24h" ? "toLocaleTimeString" : "toLocaleDateString"]([], range === "24h" ? { hour: "2-digit", minute: "2-digit" } : { month: "short", day: "numeric" });
+  g.innerHTML = `<svg viewBox="0 0 ${W} ${H}" style="width:100%; height:auto; background:#0e0e0e; border:1px solid var(--border); border-radius:8px;">
+      ${down}
+      <line x1="0" y1="${H - 18}" x2="${W}" y2="${H - 18}" stroke="#2a2a2a"/>
+      <path d="${d}" fill="none" stroke="var(--cyan)" stroke-width="1.6"/>
+      <text x="4" y="12" fill="#888" font-size="10">${escapeHtml(max.toFixed(0))} ms</text>
+      <text x="4" y="${H - 4}" fill="#888" font-size="10">${escapeHtml(lbl(first.t))}</text>
+      <text x="${W - 4}" y="${H - 4}" fill="#888" font-size="10" text-anchor="end">${escapeHtml(lbl(last.t))}</text>
+    </svg>
+    <div class="desc" style="margin-top:0.5rem;">Cyan: response time. Red: checks that failed. The server checks every ${escapeHtml(every)} s while it has the data key (after a sign-in since it started).</div>`;
+}
+
+// ── server stats ──
+let statsTimer = null;
+function toggleStats() {
+  const el = document.getElementById("stats");
+  const on = !el.classList.contains("show");
+  el.classList.toggle("show", on);
+  document.getElementById("stats-btn").classList.toggle("alert", false);
+  localStorage.setItem("forgepanel-stats", on ? "1" : "0");
+  clearInterval(statsTimer);
+  if (on) { loadStats(); statsTimer = setInterval(loadStats, 5000); }
+}
+const fmtBytes = b => { if (b == null) return "–"; const u = ["B", "KB", "MB", "GB", "TB"]; let k = 0; while (b >= 1024 && k < 4) { b /= 1024; k++; } return b.toFixed(k ? 1 : 0) + " " + u[k]; };
+const fmtUp = s => { if (s == null) return "–"; const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60); return (d ? d + "d " : "") + h + "h " + m + "m"; };
+function statCard(label, val, small, extra) {
+  return `<div class="stat"><div class="label">${escapeHtml(label)}</div><div class="val">${escapeHtml(val)}</div><div class="small">${escapeHtml(small)}</div>${extra || ""}</div>`;
+}
+async function loadStats() {
+  let r;
+  try { r = await api("stats"); } catch (e) { if (!handleAuthError(e)) document.getElementById("stats").textContent = e.message; return; }
+  const c = r.current, h = r.history;
+  const bar = p => `<div class="bar"><div style="width:${Math.max(0, Math.min(100, p || 0))}%"></div></div>`;
+  document.getElementById("stats").innerHTML = [
+    statCard("CPU", c.cpu == null ? "…" : c.cpu.toFixed(1) + "%", `${c.cores || "?"} cores`, sparkSvg(h.map(x => x.cpu), { max: 100 })),
+    statCard("Memory", c.mem.pct == null ? "–" : c.mem.pct + "%", `${fmtBytes(c.mem.used)} / ${fmtBytes(c.mem.total)}`, sparkSvg(h.map(x => x.mem), { max: 100, color: "var(--orange)" })),
+    statCard("Disk", c.disk ? c.disk.pct + "%" : "–", c.disk ? `${fmtBytes(c.disk.used)} / ${fmtBytes(c.disk.total)}` : "", c.disk ? bar(c.disk.pct) : ""),
+    statCard("Load", c.load ? c.load[0].toFixed(2) : "–", c.load ? `5m ${c.load[1]} · 15m ${c.load[2]}` : "", ""),
+    statCard("Uptime", fmtUp(c.uptime), "since last boot", ""),
+    statCard("Network", `↓ ${fmtBytes(c.net.rx_rate)}/s`, `↑ ${fmtBytes(c.net.tx_rate)}/s`, sparkSvg(h.map(x => x.rx), { color: "var(--green)" })),
+  ].join("");
+}
+
+// ── new services from automatic scans ──
+let pending = [];
+async function refreshPending() {
+  try { pending = (await api("scan/pending")).pending || []; } catch (e) { handleAuthError(e); return; }
+  const b = document.getElementById("new-badge");
+  b.textContent = pending.length;
+  b.classList.toggle("show", pending.length > 0);
+  document.getElementById("new-btn").classList.toggle("alert", pending.length > 0);
+  if (document.getElementById("newpanel").classList.contains("show")) drawNew();
+}
+const pkey = x => `${x.ip}:${x.port}`;
+function drawNew() {
+  document.getElementById("new-sub").textContent = pending.length
+    ? `${pending.length} service(s) found by automatic scans that are not on your dashboard.`
+    : "Nothing new. Automatic scans flag services that are not on the dashboard yet.";
+  document.getElementById("new-list").innerHTML = pending.map((x, k) => `
+    <div class="row">
+      <span class="tag new">New</span>
+      <span class="grow"><b>${escapeHtml(x.name)}</b> · ${escapeHtml(x.scheme)}://${escapeHtml(x.ip)}:${escapeHtml(x.port)}
+        <span class="desc">${escapeHtml(x.title || "")}${x.match !== "custom" ? " · official tile" : ""}</span></span>
+      <button class="btn" onclick="resolvePending('accept', [${k}])">Accept</button>
+      <button class="btn" onclick="resolvePending('dismiss', [${k}])">Dismiss</button>
+    </div>`).join("");
+  document.getElementById("new-all").innerHTML = pending.length > 1
+    ? `<button class="btn primary" onclick="resolvePending('accept', pending.map((_, k) => k))">Accept all</button>
+       <button class="btn" onclick="resolvePending('dismiss', pending.map((_, k) => k))">Dismiss all</button>` : "";
+}
+async function openNew() {
+  document.getElementById("newpanel").classList.add("show");
+  drawNew();
+  await refreshPending();
+  try {
+    const h = (await api("scan/history")).history || [];
+    document.getElementById("history").innerHTML = h.length ? h.slice(0, 15).map(x => `
+      <div class="row"><span class="tag">${escapeHtml(x.source)}</span>
+      <span class="grow">${escapeHtml(new Date(x.created.replace(/([+-]\d\d)(\d\d)$/, "$1:$2")).toLocaleString())}</span>
+      <span class="desc">${escapeHtml(x.subnet || "")}</span><span>${escapeHtml(x.error || (x.count + " found"))}</span></div>`).join("")
+      : `<div class="desc">No scans yet.</div>`;
+  } catch (e) { handleAuthError(e); }
+}
+async function resolvePending(action, idxs) {
+  const keys = idxs.map(k => pending[k]).filter(Boolean).map(pkey);
+  if (!keys.length) return;
+  try {
+    const r = await api("scan/pending", "POST", { action, keys });
+    if (action === "accept" && r.services.length) await applyScan({ services: r.services, generated: r.services[0].flagged_at });
+  } catch (e) { if (!handleAuthError(e)) await showModal("Failed", e.message, "OK"); }
+  await refreshPending();
+}
+
+// ── auto-scan schedule ──
+async function loadSchedule() {
+  try {
+    const r = await api("schedule");
+    const sel = document.getElementById("schedule");
+    sel.value = r.mode;
+    sel.options[3].textContent = r.mode === "custom" ? `Auto-scan: every ${r.minutes} min` : "Auto-scan: custom…";
+    sel.title = r.next_auto_scan ? `Next automatic scan ${new Date(r.next_auto_scan * 1000).toLocaleString()} (setting from ${r.source})` : `Automatic network scans (setting from ${r.source})`;
+  } catch (e) { handleAuthError(e); }
+}
+async function setSchedule(mode) {
+  let minutes = 360;
+  if (mode === "custom") {
+    const v = await askText("Custom Interval", "Scan every how many minutes? (5 to 10080)", "Minutes", "360");
+    if (v === null) { loadSchedule(); return; }
+    minutes = parseInt(v) || 360;
+  }
+  try { await api("schedule", "PUT", { mode, minutes }); } catch (e) { if (!handleAuthError(e)) await showModal("Failed", e.message, "OK"); }
+  loadSchedule();
 }
 
 async function resetAll() {
@@ -570,6 +994,11 @@ async function logout() {
   render();
   checkAll();
   setInterval(checkAll, 30000);
+  setInterval(refreshUptime, 60000);
+  refreshPending();
+  setInterval(refreshPending, 60000);
+  loadSchedule();
+  if (localStorage.getItem("forgepanel-stats") === "1") toggleStats();
 })();
 </script>
 </body>
