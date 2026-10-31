@@ -479,7 +479,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         super().__init__(*a, directory=ROOT, **kw)
 
     def log_message(self, fmt, *args):
-        log.info("%s %s", self.address_string(), fmt % args)
+        msg = re.sub(r"(/api/push/)[^\s?\"]+", r"\1<token>", fmt % args)   # never log push tokens
+        log.info("%s %s", self.address_string(), msg)
 
     def end_headers(self):
         self.send_header("X-Content-Type-Options", "nosniff")
@@ -516,13 +517,27 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         super().do_HEAD()
 
     def do_GET(self):
+        if self.path.startswith(fp_ext.PUSH_PREFIX):
+            return self.push()
+        if urllib.parse.urlsplit(self.path).path.rstrip("/") == "/status":
+            self.path = "/pages/status.html"   # public status page (data API is gated by the settings toggle)
         if self.path.startswith("/api/"):
             return self.api("GET")
         if self.blocked():
             return self.send_error(404)
         super().do_GET()
 
-    def do_POST(self): self.api("POST") if self.path.startswith("/api/") else self.send_error(405)
+    def do_POST(self):
+        if self.path.startswith(fp_ext.PUSH_PREFIX):
+            return self.push()
+        self.api("POST") if self.path.startswith("/api/") else self.send_error(405)
+
+    def push(self):
+        try:
+            fp_ext.handle_push(self)   # authenticated by the per-service push token only
+        except Exception:
+            log.exception("push endpoint")
+            self.send_json(500, {"ok": False})
     def do_PUT(self): self.api("PUT") if self.path.startswith("/api/") else self.send_error(405)
 
     # helpers
@@ -806,9 +821,11 @@ def run_scan_job(subnet, source="server", flag=False, cancel=None):
             raise ValueError("Data key not available (sign in once after the server starts)")
         dek = STATE.worker["dek"]
         STATE.store.add_scan(dek, result, source)
+        n = None
         if flag:
             n = flag_new(dek, result)
             log.info("Auto-scan found %d service(s), %d new", len(found), n)
+        fp_ext.on_scan(dek, result, n)
         if STATE.scan.get("cancel") is cancel:
             STATE.scan["error"] = None
     except ScanCancelled:
@@ -1078,8 +1095,9 @@ def r_uptime(h, d):
     now = int(time.time())
     start, width = now - span, span / buckets
     out = []
+    saved = STATE.store.load_saved(s["dek"])
     for it in items:
-        key = uptime_key(str(it.get("ip", "")), it.get("port"))
+        key = fp_ext.item_key(saved, it)   # push/DNS checks have their own series
         rows = STATE.store.q("SELECT ts, up, ms FROM uptime WHERE key=? AND ts>=? ORDER BY ts", (key, start))
         b = [{"n": 0, "up": 0, "ms": 0.0, "msn": 0} for _ in range(buckets)]
         for ts, up, ms in rows:
@@ -1227,6 +1245,9 @@ ROUTES = {
     ("POST", "/api/scan/import"): r_scan_import,
 }
 
+import fp_ext   # noqa: E402  (check types, push, notifications, Docker, widgets, status page)
+fp_ext.install(sys.modules[__name__])
+
 def main():
     global STATE
     ap = argparse.ArgumentParser(description="ForgePanel server")
@@ -1238,13 +1259,16 @@ def main():
     ap.add_argument("--key", help="private key file (default database/certs/server.key)")
     ap.add_argument("--uptime-interval", type=int, default=60, help="seconds between uptime checks (default 60)")
     ap.add_argument("--uptime-retention", type=int, default=8, help="days of uptime history to keep (default 8)")
+    ap.add_argument("--docker-sock", default=fp_ext.DOCKER_SOCK, help="Docker socket for label discovery (read-only GETs)")
     args = ap.parse_args()
+    fp_ext.DOCKER_SOCK = args.docker_sock
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     if not HAVE_CRYPTO:
         log.warning("Python 'cryptography' not installed: dashboard data and scan results are stored "
                     "UNENCRYPTED in %s. Install python3-cryptography to enable encryption at rest.", args.db)
     db = os.path.abspath(args.db)
     STATE = State(Store(db))
+    fp_ext.migrate()   # additive: CREATE TABLE IF NOT EXISTS push_state
     UPTIME["interval"] = max(10, args.uptime_interval)
     UPTIME["retention_days"] = max(1, args.uptime_retention)
     srv = http.server.ThreadingHTTPServer((args.host, args.port), Handler)
