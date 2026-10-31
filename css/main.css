@@ -20,3 +20,15 @@ iframe#bg {
   position: fixed; inset: 0; width: 100%; height: 100%;
   border: none; z-index: 0; opacity: 0.35; pointer-events: none;
 }
+
+/* Core Map */
+.brand-logo { width: 34px; height: 34px; vertical-align: middle; }
+.brand-btn { background: none; border: 0; padding: 0; cursor: pointer; display: inline-flex; align-items: center; gap: .6rem; color: inherit; font: inherit; }
+.brand-btn:hover .brand-logo { filter: drop-shadow(0 0 6px #b91c1c); }
+#coremap { position: fixed; inset: 0; z-index: 9999; background: #0a0a0a; }
+#coremap canvas { display: block; }
+#coremap .cm-close { position: absolute; top: 16px; right: 16px; width: 38px; height: 38px; border-radius: 10px; background: #141414; border: 1px solid #2a2a2a; color: #e5e5e5; font-size: 16px; cursor: pointer; }
+#coremap .cm-close:hover { border-color: #b91c1c; }
+#coremap .cm-legend { position: absolute; left: 16px; bottom: 16px; display: flex; gap: 14px; font-size: 12px; color: #a1a1aa; background: #141414; border: 1px solid #2a2a2a; border-radius: 10px; padding: 8px 12px; }
+#coremap .cm-legend span::before { content: ""; display: inline-block; width: 9px; height: 9px; border-radius: 3px; background: var(--c); margin-right: 6px; }
+#coremap .cm-tip { position: fixed; display: none; pointer-events: none; background: #141414; border: 1px solid #2a2a2a; border-radius: 8px; padding: 8px 10px; font-size: 12px; color: #e5e5e5; max-width: 320px; word-break: break-all; }

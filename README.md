@@ -1,6 +1,18 @@
+<p align="center"><img src="assets/logo.png" alt="ForgePanel logo" width="128"></p>
+
 # ForgePanel-Dashboard
 
 Self-hosted dashboard for accessing all your local and private services from one place. Add your own services, set names, IPs, ports, and icons, and check status at a glance.
+
+## Core Map
+
+Click the ForgePanel logo in the dashboard header to open **Core Map**, a full-screen animated view. The ForgePanel core sits in the center and every service (official and custom) is a tile on rings around it, joined to the core by a line:
+
+- **Green**: connected/online. Data pulses travel along the line toward the core.
+- **Red**: not connected/down. The line is dashed and flickers.
+- **Yellow**: not detected (never checked, no address, or no status). The line is dashed and pulses slowly.
+
+Hover a tile to see its name, URL and status. Click it to open the service. While Core Map is open it re-checks statuses through the server-side `/api/check` every 5 seconds. Press **Esc** or the ✕ button to close it. If your system asks for reduced motion, it draws a still map.
 
 ## Features
 

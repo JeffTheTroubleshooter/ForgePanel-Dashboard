@@ -6,6 +6,9 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <title>ForgePanel</title>
+<link rel="icon" type="image/png" sizes="32x32" href="../assets/favicon-32.png">
+<link rel="icon" type="image/png" sizes="192x192" href="../assets/favicon-192.png">
+<link rel="apple-touch-icon" href="../assets/favicon-192.png">
 <style>
   :root {
     --bg: #0a0a0a;
@@ -219,7 +222,7 @@
 
 <div id="dashboard">
   <header>
-    <h1 style="font-size:1.35rem; font-weight:600; letter-spacing:-0.02em;">ForgePanel</h1>
+    <h1 style="font-size:1.35rem; font-weight:600; letter-spacing:-0.02em;"><button class="brand-btn" onclick="openCoreMap()" title="Open Core Map"><img class="brand-logo" src="../assets/logo.svg" alt="ForgePanel logo">ForgePanel</button></h1>
     <p style="color:var(--muted); margin-top:0.15rem; font-size:0.8rem;">Service dashboard</p>
   </header>
   <div class="toolbar">
@@ -290,6 +293,7 @@
 
 <script src="../js/auth.js"></script>
 <script src="../js/griddrag.js"></script>
+<script src="../js/coremap.js"></script>
 <script>
 let saved = {};
 let user = "";
