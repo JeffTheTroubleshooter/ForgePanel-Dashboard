@@ -58,13 +58,18 @@ Change credentials on first login.
 ForgePanel-Dashboard/
 ├── index.html
 ├── server.py            # static files + JSON API + SQLite
+├── fp_ext.py            # check types, push, notifications, Docker, widgets, /status (stdlib)
 ├── database/            # forgepanel.db lives here (gitignored, never served)
 ├── pages/
 │   ├── login.html
 │   ├── dashboard.html
+│   ├── status.html      # public read-only /status page
 │   └── dots.html
 ├── js/
-│   └── auth.js
+│   ├── auth.js
+│   ├── coremap.js
+│   ├── features.js      # settings, Docker import, widgets, YAML
+│   └── yaml.js
 ├── css/
 │   └── main.css
 ├── assets/
@@ -99,6 +104,68 @@ Details in [scan/README.md](scan/README.md).
 - **Server stats** – the *Server stats* button shows CPU, RAM, disk, uptime, load and network (read from `/proc`), refreshed every 5 s with small graphs. Linux only.
 
 Background jobs (auto-scans and uptime checks) need the data key, which only lives in memory. After the server starts they begin once someone signs in.
+
+## Check Types
+
+Each tile's menu (⋮ → **Check & widget…**) picks how the service is checked. Results go into the same uptime and response-time history as before.
+
+| Type | Up when |
+|---|---|
+| HTTP(S) (default) | the port answers HTTP or TLS |
+| TCP | a TCP connection to IP:port opens |
+| HTTP keyword | the page at `path` contains the keyword (or, with "Down when found", does not) |
+| DNS | the tile's IP, used as a DNS server (port 53 by default), answers an A query for the name |
+| Push | the service called its push URL within the interval |
+
+**Push monitors.** Choosing Push creates a unique URL, for example `http://forgepanel:8084/api/push/<token>`. Call it from a cron job or script, e.g. `curl -fsS http://forgepanel:8084/api/push/<token>`. Add `?status=down` to report a failure. The service is marked down if no push arrives within the interval (+5 s grace). The URL needs no login: the token is the only credential. It is stored hashed in SQLite, is never written to the log, and can be regenerated or revoked from the same dialog.
+
+## Notifications
+
+**Settings → Notifications** sends alerts to a **Discord webhook** and/or **ntfy** (server URL, topic, optional access token):
+
+- service down / recovered (each up↔down change seen by the background checker)
+- a scan found new hosts or services
+
+**Send test** sends a test message to every enabled channel. The webhook URL and token are stored encrypted in SQLite. They are shown masked, are never returned to the browser in full, and are never logged.
+
+## Docker Discovery
+
+The **Docker** toolbar button reads `/var/run/docker.sock` (read-only GET `/containers/json`; change it with `--docker-sock PATH`) and lists running containers. Containers with labels are pre-selected:
+
+```yaml
+labels:
+  forgepanel.name: "Jellyfin"
+  forgepanel.url: "http://192.168.1.20:8096"
+  forgepanel.icon: "jellyfin"          # ../assets/icons/jellyfin.png, or a full URL
+  forgepanel.group: "Media"            # tile is put in (or creates) this group
+```
+
+Other running containers with published ports can be ticked and imported too. If the socket is missing or permission is denied, the dialog says so. To grant access, add the user running ForgePanel to the `docker` group and restart ForgePanel, or mount the socket read-only (`/var/run/docker.sock:/var/run/docker.sock:ro`).
+
+## Tile Widgets
+
+Optional, per tile (**⋮ → Check & widget…**). Each widget shows one line on the tile and refreshes every 60 s (cached 30 s on the server):
+
+| Widget | Shows | Key field |
+|---|---|---|
+| Jellyfin | sessions now playing | API key (Dashboard → API Keys) |
+| Pi-hole | blocked queries today (v6 API, falls back to v5) | v6 password / app password, or v5 API token |
+| AdGuard Home | blocked queries | username + password |
+| Proxmox VE | CPU and RAM per node | API token `user@realm!tokenid=secret` (PVEAuditor is enough) |
+
+"API URL" defaults to the tile's own address. Keys are stored encrypted in SQLite and only a masked hint goes back to the browser. Self-signed HTTPS is accepted. If a widget cannot reach its API, the tile shows a small "widget error" note and nothing else changes.
+
+## Public Status Page
+
+**Settings → Public status page** turns on a read-only page at `/status` (off by default). It shows every monitored service with its status, 24 h uptime, a 24-hour bar and response time, grouped like the dashboard, plus an optional read-only Core Map. It shows no secrets, URLs or push tokens. IPs and ports are hidden unless "Show IPs and ports" is ticked. When the page is off, `/api/public/status` returns 404. After a server restart it shows "unavailable" until an admin signs in once (the data key only lives in memory).
+
+## YAML Export / Import
+
+**Export** asks for a format: the existing encrypted backup (`.conf`), or **YAML** (`forgepanel.yaml`). YAML is readable and editable, and contains configured services, custom tiles, check and widget settings, and groups. It leaves out secrets (widget keys, push tokens, notification settings) and uploaded (data-URL) logos. **Import** accepts `.yaml`/`.yml` and merges: matching tiles are updated, new ones are added, and the group layout is replaced. YAML is produced and parsed in the browser by a small built-in parser (`js/yaml.js`), so PyYAML is not needed.
+
+## Core Map Extras
+
+Hover a tile **or its line** to see the last response time. When a check goes from up to down, its line and tile pulse red for a few seconds (a steady highlight with reduced motion).
 
 ## HTTPS
 
@@ -155,7 +222,7 @@ It stops and removes the `forgepanel` service (systemd, or OpenRC on Alpine), as
 cd ForgePanel-Dashboard
 python3 server.py                 # http://localhost:8084, database in database/
 python3 server.py --port 8084 --host 0.0.0.0 --db database/forgepanel.db
-# optional: --https [--cert FILE --key FILE] --uptime-interval 60 --uptime-retention 8
+# optional: --https [--cert FILE --key FILE] --uptime-interval 60 --uptime-retention 8 --docker-sock /var/run/docker.sock
 ```
 
 Then open `http://localhost:8084` (or `http://<server-ip>:8084`). A plain static server (`python3 -m http.server`) no longer works, because the dashboard needs the API.

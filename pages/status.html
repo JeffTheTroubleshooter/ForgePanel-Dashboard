@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex">
+<title>Status</title>
+<link rel="icon" href="/assets/logo.svg?v=20261031f">
+<link rel="stylesheet" href="/css/main.css?v=20261031f">
+<style>
+  :root { --red:#ff2a2a; --muted:#888; --border:#2a2a2a; --text:#f0f0f0; }
+  body { background:#0a0a0a; color:var(--text); font-family:Inter, system-ui, sans-serif; }
+  .wrap { max-width:900px; margin:0 auto; padding:1.5rem 1rem 3rem; }
+  header { display:flex; align-items:center; gap:1rem; margin-bottom:1.2rem; }
+  .brand { position:relative; z-index:10001; margin-right:5.5rem; }
+  header h1 { font-size:1.4rem; } header h1 span { color:var(--red); }
+  header .sub { color:var(--muted); font-size:0.8rem; margin-top:0.2rem; }
+  .overall { border:1px solid var(--border); border-left:3px solid #22c55e; background:#111; border-radius:10px; padding:0.8rem 1rem; margin-bottom:1.2rem; font-weight:600; }
+  .overall.bad { border-left-color:var(--red); } .overall.unk { border-left-color:#facc15; }
+  h2 { font-size:0.85rem; color:var(--muted); text-transform:uppercase; letter-spacing:0.06em; margin:1.2rem 0 0.5rem; }
+  .svc { display:grid; grid-template-columns:34px 1fr auto; gap:0.7rem; align-items:center; background:#111; border:1px solid var(--border); border-radius:10px; padding:0.6rem 0.8rem; margin-bottom:0.5rem; }
+  .logo { width:34px; height:34px; border-radius:8px; background:#141414; border:1px solid var(--border); display:flex; align-items:center; justify-content:center; overflow:hidden; font-weight:700; }
+  .logo img { max-width:26px; max-height:26px; }
+  .nm { font-weight:600; font-size:0.92rem; } .addr { color:var(--muted); font-size:0.72rem; font-family:ui-monospace, monospace; }
+  .bars { display:flex; gap:2px; margin-top:0.35rem; } .bars i { flex:1; height:14px; border-radius:2px; background:#27272a; }
+  .bars i.u { background:#22c55e; } .bars i.d { background:var(--red); } .bars i.p { background:#facc15; }
+  .right { text-align:right; font-size:0.78rem; } .st { font-weight:700; } .st.on { color:#22c55e; } .st.off { color:var(--red); } .st.unk { color:#facc15; }
+  .pct { color:var(--muted); font-family:ui-monospace, monospace; }
+  .msg { color:var(--muted); padding:2rem 0; text-align:center; }
+  footer { color:var(--muted); font-size:0.72rem; margin-top:2rem; text-align:center; }
+  #dots { display:none; }
+  .cm-bubble { animation:none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand-wrap brand" id="brand" hidden>
+      <button class="brand-btn" id="brand-btn" onclick="toggleCoreMap()" aria-pressed="false" title="Toggle Core Map"><img class="brand-logo" src="/assets/logo.svg?v=20261031f" alt="" width="56" height="56"></button>
+      <span class="cm-bubble" id="cm-bubble" aria-hidden="true">Core Map</span>
+    </div>
+    <img id="plainlogo" src="/assets/logo.svg?v=20261031f" alt="" width="56" height="56">
+    <div><h1 id="title">Service <span>status</span></h1><div class="sub" id="updated"></div></div>
+  </header>
+  <div id="overall" class="overall unk">Loading…</div>
+  <div id="list"></div>
+  <footer>Read-only status page · ForgePanel</footer>
+</div>
+<div id="dots"></div>
+<script>
+window.CM_READONLY = true;
+let DATA = { services: [], groups: [] };
+function escapeHtml(v) { return String(v == null ? "" : v).replace(/[&<>"'`]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;", "`": "&#96;" })[c]); }
+function safeImgSrc(v, fb) { const s = String(v || ""); if (/^data:image\/(png|jpe?g|gif|webp);base64,[A-Za-z0-9+/=]+$/.test(s)) return s; if (/^(\.\.\/|\/|https?:\/\/)[^"'<>\s]*$/.test(s)) return s.replace(/^\.\.\//, "/"); return fb; }
+// shims used by coremap.js (read-only: no links, statuses from the last server sample)
+function getAllServices() { return DATA.services.map(s => ({ name: s.name, logo: s.logo, key: "s:" + s.id })); }
+function cfgFor(s) { return { logo: s.logo }; }
+function urlFor() { return ""; }
+function sections() {
+  const all = DATA.services, groups = [], byName = new Map();
+  all.forEach((s, i) => { if (!s.group) return; if (!byName.has(s.group)) { const g = { g: { id: s.group, name: s.group }, items: [] }; byName.set(s.group, g); groups.push(g); } byName.get(s.group).items.push(i); });
+  return { all, groups, ung: all.map((s, i) => i).filter(i => !all[i].group) };
+}
+async function checkAll() { await load(); }
+async function load() {
+  let r, d;
+  try { r = await fetch("/api/public/status", { cache: "no-store" }); d = await r.json(); } catch (e) { d = { error: "Could not reach the server." }; r = { ok: false }; }
+  if (!r.ok) {
+    document.getElementById("overall").className = "overall unk";
+    document.getElementById("overall").textContent = d.error || "Status unavailable.";
+    document.getElementById("list").innerHTML = ""; DATA = { services: [], groups: [] }; return;
+  }
+  DATA = d;
+  document.title = d.title;
+  document.getElementById("title").textContent = d.title;
+  document.getElementById("updated").textContent = "Updated " + new Date(d.generated * 1000).toLocaleTimeString() + " · checks every " + d.interval + " s";
+  document.getElementById("brand").hidden = !d.showMap; document.getElementById("plainlogo").hidden = !!d.showMap;
+  const down = d.services.filter(s => s.up === false).length, unk = d.services.filter(s => s.up == null).length;
+  const ov = document.getElementById("overall");
+  ov.className = "overall" + (down ? " bad" : unk ? " unk" : "");
+  ov.textContent = !d.services.length ? "No monitored services." : down ? `${down} of ${d.services.length} service(s) down` : unk ? "Waiting for the first checks" : "All systems operational";
+  document.getElementById("dots").innerHTML = d.services.map((s, i) => `<div id="status-${i}" class="status ${s.up === true ? "online" : s.up === false ? "offline" : ""}" ${s.ms != null ? `data-ms="${Number(s.ms)}"` : ""}></div>`).join("");
+  const sec = sections(), row = i => {
+    const s = d.services[i], logo = safeImgSrc(s.logo, "");
+    const st = s.up === true ? ["on", "Operational"] : s.up === false ? ["off", "Down"] : ["unk", "No data"];
+    return `<div class="svc"><div class="logo">${logo ? `<img src="${escapeHtml(logo)}" alt="">` : escapeHtml((s.name || "?")[0].toUpperCase())}</div>
+      <div><div class="nm">${escapeHtml(s.name)}</div>${s.addr ? `<div class="addr">${escapeHtml(s.addr)}</div>` : ""}
+      <div class="bars" title="Last 24 hours">${s.bars.map(b => `<i class="${b == null ? "" : b >= 0.999 ? "u" : b <= 0.001 ? "d" : "p"}"></i>`).join("")}</div></div>
+      <div class="right"><div class="st ${st[0]}">${st[1]}</div><div class="pct">${s.uptime != null ? s.uptime.toFixed(2) + "%" : "–"}${s.ms != null ? " · " + Math.round(s.ms) + " ms" : ""}</div></div></div>`;
+  };
+  let html = "";
+  sec.groups.forEach(({ g, items }) => { html += `<h2>${escapeHtml(g.name)}</h2>` + items.map(row).join(""); });
+  if (sec.ung.length) html += (sec.groups.length ? "<h2>Other</h2>" : "") + sec.ung.map(row).join("");
+  document.getElementById("list").innerHTML = html;
+}
+load(); setInterval(load, 30000);
+</script>
+<script src="/js/coremap.js?v=20261031f"></script>
+</body>
+</html>

@@ -6,9 +6,9 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <title>ForgePanel</title>
-<link rel="icon" type="image/png" sizes="32x32" href="../assets/favicon-32.png?v=20261031e">
-<link rel="icon" type="image/png" sizes="192x192" href="../assets/favicon-192.png?v=20261031e">
-<link rel="apple-touch-icon" href="../assets/favicon-192.png?v=20261031e">
+<link rel="icon" type="image/png" sizes="32x32" href="../assets/favicon-32.png?v=20261031f">
+<link rel="icon" type="image/png" sizes="192x192" href="../assets/favicon-192.png?v=20261031f">
+<link rel="apple-touch-icon" href="../assets/favicon-192.png?v=20261031f">
 <style>
   :root {
     --bg: #0a0a0a;
@@ -188,6 +188,25 @@
   #settings button, .credit { white-space:nowrap; }
   .credit { color:var(--muted); font-size:0.7rem; text-decoration:none; align-self:center; padding:0 0.2rem; }
   .credit:hover { color:var(--cyan); }
+  .widget { font-size:0.72rem; color:var(--text); background:#0f0f10; border:1px solid var(--border); border-radius:6px; padding:0.2rem 0.45rem; font-family:ui-monospace, monospace; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .widget.err { color:var(--muted); border-style:dashed; }
+  .ctype { font-size:0.62rem; text-transform:uppercase; letter-spacing:0.04em; border:1px solid var(--border); border-radius:999px; padding:0 0.35rem; color:var(--muted); }
+  .panel.fx h4 { font-size:0.9rem; margin:1rem 0 0.3rem; color:var(--red); }
+  .fx-grid { display:grid; grid-template-columns:auto 1fr; gap:0.45rem 0.7rem; align-items:center; margin:0.4rem 0; }
+  .fx-row3 { display:grid; grid-template-columns:1.3fr 1fr 1.2fr; gap:0.4rem; }
+  .panel.fx input:not([type=checkbox]), .panel.fx select, .fx-cfg input:not([type=checkbox]), .fx-cfg select { background:#0a0a0a; border:1px solid var(--border); color:var(--text); border-radius:6px; padding:0.4rem 0.5rem; font-size:0.8rem; min-width:0; }
+  .fx-opts { display:flex; flex-wrap:wrap; gap:0.4rem 1.1rem; margin:0.5rem 0; font-size:0.82rem; }
+  .fx-chk { display:inline-flex; gap:0.35rem; align-items:center; font-size:0.82rem; cursor:pointer; }
+  .fx-act { display:flex; gap:0.5rem; align-items:center; margin-top:0.5rem; }
+  .fx-msg { font-size:0.78rem; color:#22c55e; } .fx-msg.bad, .fx-warn { color:var(--red); font-weight:600; }
+  .fx-l { font-size:0.82rem; color:var(--muted); }
+  .panel.fx a { color:var(--cyan); }
+  .panel .mono, .fx-cfg .mono { font-family:ui-monospace, monospace; font-size:0.75rem; } .panel .muted, .fx-cfg .muted { color:var(--muted); font-size:0.75rem; }
+  .fx-cfg { display:flex; flex-direction:column; gap:0.5rem; text-align:left; font-size:0.82rem; }
+  .fx-cfg label { display:flex; gap:0.5rem; align-items:center; } .fx-cfg label > input:not([type=checkbox]), .fx-cfg label > select { flex:1; }
+  .fx-cfg > div { display:flex; flex-direction:column; gap:0.4rem; } .fx-cfg [hidden] { display:none !important; }
+  .fx-cfg hr { border:none; border-top:1px solid var(--border); }
+  .fx-push { word-break:break-all; background:#0a0a0a; border:1px solid var(--border); border-radius:6px; padding:0.35rem 0.5rem; }
   .spark { display:flex; align-items:center; gap:0.5rem; cursor:pointer; min-height:22px; }
   .spark svg { flex:1; height:22px; }
   .spark .pct { font-size:0.7rem; color:var(--muted); font-family:ui-monospace, monospace; min-width:52px; text-align:right; }
@@ -224,7 +243,7 @@
   .brand-logo { width:64px; height:64px; display:block; }
   .cm-bubble { position:absolute; left:calc(100% + 12px); top:50%; transform:translateY(-50%); white-space:nowrap; background:#141414; border:1px solid #2a2a2a; border-left:2px solid #ff2a2a; color:#e5e5e5; font-size:12px; padding:5px 10px; border-radius:10px; pointer-events:none; }
 </style>
-<link rel="stylesheet" href="../css/main.css?v=20261031e">
+<link rel="stylesheet" href="../css/main.css?v=20261031f">
 </head>
 <body>
 <iframe id="bg" src="dots.html"></iframe>
@@ -233,7 +252,7 @@
   <header>
     <h1 class="sr-only">ForgePanel – Service Dashboard</h1>
     <div class="brand-wrap">
-      <button class="brand-btn" id="brand-btn" onclick="toggleCoreMap()" aria-label="ForgePanel – Service Dashboard. Toggle Core Map view" aria-pressed="false" title="ForgePanel – toggle Core Map"><img class="brand-logo" src="../assets/logo.svg?v=20261031e" alt="" width="64" height="64"></button>
+      <button class="brand-btn" id="brand-btn" onclick="toggleCoreMap()" aria-label="ForgePanel – Service Dashboard. Toggle Core Map view" aria-pressed="false" title="ForgePanel – toggle Core Map"><img class="brand-logo" src="../assets/logo.svg?v=20261031f" alt="" width="64" height="64"></button>
       <span class="cm-bubble" id="cm-bubble" aria-hidden="true">Click me</span>
     </div>
   </header>
@@ -241,6 +260,8 @@
     <button class="tbtn" onclick="addCustom()">Add service</button>
     <button class="tbtn" onclick="addGroup()" title="Create a group, then drag tiles into it">Add group</button>
     <button class="tbtn" id="stats-btn" onclick="toggleStats()" title="CPU, RAM, disk and network of the ForgePanel server">Server stats</button>
+    <button class="tbtn" onclick="openDocker()" title="Add tiles from running Docker containers (forgepanel.* labels)">Docker</button>
+    <button class="tbtn" onclick="openSettings()" title="Notifications and the public status page">Settings</button>
     <button class="tbtn" id="new-btn" onclick="openNew()" title="Scan history and new services found by automatic scans">Scan history<span class="badge" id="new-badge"></span></button>
     <select id="schedule" onchange="setSchedule(this.value)" title="Automatic network scans">
       <option value="off">Auto-scan: off</option>
@@ -262,7 +283,7 @@
   <input type="file" id="scan-file" accept=".enc,.json" onchange="importScanFile(this)">
   <button onclick="exportConfig()" title="Download an encrypted backup of your settings">Export</button>
   <button onclick="document.getElementById('import-file').click()" title="Restore settings from a backup file">Import</button>
-  <input type="file" id="import-file" accept=".json,.conf" onchange="importConfig(this)">
+  <input type="file" id="import-file" accept=".json,.conf,.yaml,.yml" onchange="importConfig(this)">
   <button class="danger" onclick="resetAll()" title="Clear all saved IPs, ports, and custom services">Reset</button>
   <button onclick="logout()">Log Out</button>
   <a class="credit" href="https://github.com/JeffTheTroubleshooter" target="_blank" rel="noopener noreferrer">Created by JeffTheTroubleshooter</a>
@@ -304,9 +325,11 @@
   </div>
 </div>
 
-<script src="../js/auth.js?v=20261031e"></script>
-<script src="../js/griddrag.js?v=20261031e"></script>
-<script src="../js/coremap.js?v=20261031e"></script>
+<script src="../js/auth.js?v=20261031f"></script>
+<script src="../js/griddrag.js?v=20261031f"></script>
+<script src="../js/coremap.js?v=20261031f"></script>
+<script src="../js/yaml.js?v=20261031f"></script>
+<script src="../js/features.js?v=20261031f"></script>
 <script>
 let saved = {};
 let user = "";
@@ -455,13 +478,14 @@ function cardHtml(s, i) {
           <span class="handle" title="Drag to reorder or onto a group to move it" onpointerdown="tilePointerDown(event, ${i})">&#8942;&#8942;</span>
           <div class="cmenu" id="cmenu-${i}">
             <button onclick="toggleMenu(event, ${i})" title="More">&#8942;</button>
-            <div class="items"><button onclick="moveToGroupMenu(${i})">Move to group…</button></div>
+            <div class="items"><button onclick="moveToGroupMenu(${i})">Move to group…</button><button onclick="configureService(${i})">Check &amp; widget…</button></div>
           </div>
           <div class="status" id="status-${i}"></div>
           <input type="file" id="file-${i}" accept="image/*" onchange="changeLogo(${i}, this)">
         </div>
         <div class="name">${s.custom ? `<input id="name-${i}" value="${name}" placeholder="Service name" style="background:transparent; border:none; color:inherit; font-weight:600; font-size:1rem; width:100%;">` : name}</div>
-        <div class="desc">${escapeHtml(s.desc)}</div>
+        <div class="desc">${escapeHtml(s.desc)}${c.check && c.check.type && c.check.type !== "http" ? ` <span class="ctype">${escapeHtml(c.check.type)}</span>` : ""}</div>
+        <div class="widget" id="widget-${i}" hidden></div>
         <div class="spark" id="spark-${i}" onclick="openDetail(${i})" title="Uptime and response time (click for details)"></div>
         <div class="fields">
           <input id="ip-${i}" placeholder="IP or hostname" value="${escapeHtml(c.ip || "")}">
@@ -861,20 +885,24 @@ async function checkMany(indexes) {
     const el = document.getElementById(`status-${x.i}`);
     const c = cfgFor(x.s);
     el.className = "status";
-    if (c.ip) items.push({ x, c });
+    if (c.ip || (c.check && c.check.type === "push")) items.push({ x, c });
   });
   if (!items.length) return;
   let res;
   try {
-    res = (await api("check", "POST", { items: items.map(({ c }) => ({ ip: c.ip, port: c.port, scheme: urlFor(itemsSvc(c)).split(":")[0] })) })).results;
+    res = (await api("check", "POST", { items: items.map(({ x, c }) => ({ id: x.s.key, ip: c.ip, port: c.port, scheme: (urlFor(itemsSvc(c)) || "http:").split(":")[0] })) })).results;
   } catch (e) { if (!handleAuthError(e)) console.warn(e.message); return; }
   let changed = false;
   items.forEach(({ x, c }, k) => {
     const r = res[k] || {};
     const el = document.getElementById(`status-${x.i}`);
-    if (el) el.className = r.online ? "status online" : "status offline";
-    const cur = urlFor(itemsSvc(c)).split(":")[0];
-    if (r.online && r.scheme && r.scheme !== cur) { c.scheme = r.scheme; changed = true; }
+    if (el) {
+      el.className = r.online ? "status online" : "status offline";
+      if (r.ms != null) el.dataset.ms = r.ms; else delete el.dataset.ms;
+      el.title = (r.online ? "Online" : "Offline") + (r.ms != null ? ` · ${r.ms} ms` : "") + (r.detail ? ` · ${r.detail}` : "");
+    }
+    const cur = (urlFor(itemsSvc(c)) || "http:").split(":")[0];
+    if (r.online && r.scheme && r.scheme !== cur && (!c.check || c.check.type === "http")) { c.scheme = r.scheme; changed = true; }
   });
   if (changed) persist();
 }
@@ -900,6 +928,12 @@ async function deleteCustom(index) {
 }
 
 async function exportConfig() {
+  const fmt = await showModal("Export", "Choose a format.", "Next", false, null, null, null, {
+    html: `<label class="pick"><input type="radio" name="ex-fmt" value="json" checked> <span>Encrypted backup (.conf): everything, password protected</span></label>
+           <label class="pick"><input type="radio" name="ex-fmt" value="yaml"> <span>YAML (.yaml): readable, editable, no secrets</span></label>`,
+    collect: () => (document.querySelector('input[name="ex-fmt"]:checked') || {}).value });
+  if (!fmt) return;
+  if (fmt === "yaml") return fxExportYaml();
   const pw = await askPassword("Export", "Enter your password. The backup is encrypted with it.");
   if (!pw) return;
   try {
@@ -917,8 +951,10 @@ async function importConfig(input) {
   const file = input.files[0];
   input.value = "";
   if (!file) return;
+  const text = await file.text();
+  if (/\.ya?ml$/i.test(file.name) || /^\s*(#|format:)/.test(text)) return fxImportYaml(text);
   let obj;
-  try { obj = JSON.parse(await file.text()); }
+  try { obj = JSON.parse(text); }
   catch { await showModal("Import Failed", "That file is not a ForgePanel backup.", "OK"); return; }
   let pw = "";
   if (!(obj.data && obj.data.plain)) {
@@ -1048,10 +1084,10 @@ async function applyScan(data) {
 // ── uptime sparklines + detail view ──
 async function refreshUptime() {
   const all = getAllServices();
-  const idx = all.map((s, i) => i).filter(i => cfgFor(all[i]).ip);
+  const idx = all.map((s, i) => i).filter(i => cfgFor(all[i]).ip || (cfgFor(all[i]).check || {}).type === "push");
   if (!idx.length) return;
   let res;
-  try { res = (await api("uptime", "POST", { range: "24h", buckets: 48, items: idx.map(i => ({ ip: cfgFor(all[i]).ip, port: cfgFor(all[i]).port })) })).results; }
+  try { res = (await api("uptime", "POST", { range: "24h", buckets: 48, items: idx.map(i => ({ id: all[i].key, ip: cfgFor(all[i]).ip, port: cfgFor(all[i]).port })) })).results; }
   catch (e) { handleAuthError(e); return; }
   idx.forEach((i, k) => {
     const el = document.getElementById(`spark-${i}`);
@@ -1078,9 +1114,9 @@ async function loadDetail(range) {
   document.getElementById("rng-24h").classList.toggle("on", range === "24h");
   document.getElementById("rng-7d").classList.toggle("on", range === "7d");
   const g = document.getElementById("detail-graph");
-  if (!c.ip) { document.getElementById("detail-sub").textContent = "Set an IP or hostname first."; g.innerHTML = ""; return; }
+  if (!c.ip && (c.check || {}).type !== "push") { document.getElementById("detail-sub").textContent = "Set an IP or hostname first."; g.innerHTML = ""; return; }
   let r, every = 60;
-  try { const resp = await api("uptime", "POST", { range, buckets: range === "24h" ? 96 : 168, items: [{ ip: c.ip, port: c.port }] }); r = resp.results[0]; every = resp.interval; }
+  try { const resp = await api("uptime", "POST", { range, buckets: range === "24h" ? 96 : 168, items: [{ id: s.key, ip: c.ip, port: c.port }] }); r = resp.results[0]; every = resp.interval; }
   catch (e) { if (!handleAuthError(e)) g.textContent = e.message; return; }
   const ms = r.series.map(p => p.ms).filter(v => v != null);
   const avg = ms.length ? (ms.reduce((a, b) => a + b, 0) / ms.length).toFixed(0) : "–";
@@ -1235,6 +1271,9 @@ async function logout() {
   }
   render();
   checkAll();
+  fxLoadSecrets();
+  fxRefreshWidgets();
+  setInterval(fxRefreshWidgets, 60000);
   setInterval(checkAll, 30000);
   setInterval(refreshUptime, 60000);
   refreshPending();

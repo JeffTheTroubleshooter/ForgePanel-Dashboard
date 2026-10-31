@@ -20,6 +20,16 @@
     if (el.classList.contains("offline")) return "off";
     return "unk";
   }
+  function msOf(i) {
+    const el = document.getElementById("status-" + i);
+    const v = el && el.dataset ? parseFloat(el.dataset.ms) : NaN;
+    return isNaN(v) ? null : v;
+  }
+  // up -> down: remember when, so the link pulses red for a few seconds
+  function setSt(n, st, now) {
+    if (n.st === "on" && st === "off") n.failAt = now;
+    n.st = st; n.ms = msOf(n.i);
+  }
   const imgs = new Map();
   function imgFor(src) {
     if (!src) return null;
@@ -33,7 +43,7 @@
     const ungIdx = sec ? sec.ung : all.map((s, i) => i);
     const grp = sec ? sec.groups.filter(x => x.items.length) : [];
     const newSig = JSON.stringify([ungIdx.map(i => all[i].key), grp.map(x => [x.g.id, x.g.name, x.items.map(i => all[i].key)])]);
-    if (newSig === sig) { nodes.forEach(n => { n.st = statusOf(n.i); }); groupStatus(); return; }
+    if (newSig === sig) { const t = performance.now(); nodes.forEach(n => setSt(n, statusOf(n.i), t)); groupStatus(); return; }
     sig = newSig;
     const now = performance.now();
     const oldN = new Map(nodes.map(n => [n.key, n])), oldG = new Map(groups.map(g => [g.id, g]));
@@ -42,7 +52,8 @@
       const s = all[i], key = s.key || ("c:" + i), o = oldN.get(key);
       let src = null; try { src = safeImgSrc(cfgFor(s).logo || s.logo, ""); } catch (e) { src = s.logo || null; }
       const n = o || { key, x: G ? G.x : 0, y: G ? G.y : 0, born: now + 120 + (seq++) * 55, ph: Math.random() * 6.28 };
-      Object.assign(n, { i, name: s.name, img: imgFor(src), url: urlFor(s), st: statusOf(i), g: G });
+      Object.assign(n, { i, name: s.name, img: imgFor(src), url: urlFor(s), g: G });
+      setSt(n, statusOf(i), now);
       return n;
     };
     nodes = []; groups = [];
@@ -192,7 +203,15 @@
     nodes.forEach(n => {
       const a = ease(appear(now, n.born)); if (a <= 0) return;
       const [x, y] = npos.get(n), [px, py] = n.g ? gpos.get(n.g) : [0, 0];
-      drawLink(x, y, px, py, n.st, a, t, n.i, 2, hover === n);
+      drawLink(x, y, px, py, n.st, a, t, n.i, 2, hover === n || (hover && hover.link === n));
+      const f = failPulse(n, now);
+      if (f > 0) {   // red pulse along the link right after an up -> down transition
+        const w = still ? 1 : 0.5 + 0.5 * Math.sin((now - n.failAt) / 110);
+        ctx.save(); ctx.globalAlpha = a * f * w; ctx.strokeStyle = COL.off; ctx.shadowColor = COL.off; ctx.shadowBlur = 18; ctx.lineWidth = 6;
+        ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(px, py); ctx.stroke();
+        ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(x, y, TILE * 0.62 + (1 - f) * 14, 0, Math.PI * 2); ctx.stroke(); ctx.restore();
+        moving = true;
+      }
     });
     // cores
     const br = still ? 0.5 : 0.5 + 0.5 * Math.sin(t * 1.6);
@@ -207,7 +226,8 @@
       ctx.fillStyle = "#e5e5e5"; ctx.fillText(g.name, x, y + GCORE / 2 + 14, 130); ctx.restore();
     }
     // tiles (hovered one last so it sits on top)
-    const order = hover ? nodes.filter(n => n !== hover).concat([hover]) : nodes;
+    const hn = hover && !hover.link ? hover : null;
+    const order = hn ? nodes.filter(n => n !== hn).concat([hn]) : nodes;
     for (const n of order) {
       const a = ease(appear(now, n.born)); if (a <= 0) continue;
       const [x, y] = npos.get(n), c = COL[n.st], hv = hover === n;
@@ -230,6 +250,8 @@
     }
     if (!still || moving) raf = requestAnimationFrame(frame);
   }
+  const PULSE = 4500;
+  function failPulse(n, now) { return n.failAt && n.st === "off" ? Math.max(0, 1 - (now - n.failAt) / PULSE) : 0; }
   function kick() { if (!raf && cv) raf = requestAnimationFrame(frame); }
   function redraw() { if (reduce.matches) kick(); }
 
@@ -238,15 +260,25 @@
     const [wx, wy] = toWorld(sx, sy);
     for (let k = nodes.length - 1; k >= 0; k--) { const n = nodes[k]; if (Math.abs(wx - n.x) <= TILE / 2 + 3 && Math.abs(wy - n.y) <= TILE / 2 + 3) return n; }
     for (const g of groups) if (Math.abs(wx - g.x) <= GCORE / 2 && Math.abs(wy - g.y) <= GCORE / 2) return { g, group: true };
+    const tol = 6 / scale();
+    for (const n of nodes) {   // hovering a link shows its service
+      const px = n.g ? n.g.x : 0, py = n.g ? n.g.y : 0, dx = px - n.x, dy = py - n.y, L2 = dx * dx + dy * dy || 1;
+      const u = Math.max(0, Math.min(1, ((wx - n.x) * dx + (wy - n.y) * dy) / L2));
+      if (Math.hypot(wx - (n.x + u * dx), wy - (n.y + u * dy)) <= tol) return { link: n };
+    }
     return null;
   }
   function showTip(e, n) {
+    if (n && n.link) n = n.link;
     if (!n || n.group) { tip.style.display = "none"; return; }
     tip.innerHTML = "";
     const b = document.createElement("b"); b.textContent = n.name;
     const u = document.createElement("div"); u.textContent = n.url || "(no address set)";
     const s = document.createElement("div"); s.textContent = LBL[n.st]; s.style.color = COL[n.st];
     tip.append(b, u, s);
+    const m = document.createElement("div"); m.className = "cm-ms";
+    m.textContent = n.ms != null ? "Response: " + Math.round(n.ms) + " ms" : (n.st === "on" ? "Response: n/a" : "Response: -");
+    tip.append(m);
     if (n.g) { const g = document.createElement("div"); g.textContent = "Group: " + n.g.name; g.style.color = "#a1a1aa"; tip.append(g); }
     tip.style.display = "block"; tip.style.left = (e.clientX + 14) + "px"; tip.style.top = (e.clientY + 14) + "px";
   }
@@ -261,15 +293,16 @@
       if (drag.moved || Math.abs(dx) + Math.abs(dy) > 4) { drag.moved = true; panX = drag.px + dx; panY = drag.py + dy; cv.style.cursor = "grabbing"; tip.style.display = "none"; kick(); return; }
     }
     const h = hit(e.clientX, e.clientY), n = h && !h.group ? h : null;
-    if (n !== hover) { hover = n; kick(); }
-    cv.style.cursor = n ? "pointer" : "grab";
+    const same = n && hover && ((n.link && n.link === hover.link) || n === hover);
+    if (!same && n !== hover) { hover = n; kick(); }
+    cv.style.cursor = n && !n.link ? "pointer" : "grab";
     showTip(e, n);
   }
   function onUp(e) {
     const d = drag; drag = null; cv.style.cursor = "grab";
     if (!d || d.moved) return;
     const h = hit(e.clientX, e.clientY);
-    if (h && !h.group && h.url) window.open(h.url, "_blank", "noopener");
+    if (h && !h.group && !h.link && h.url) window.open(h.url, "_blank", "noopener");
   }
   function onWheel(e) {
     e.preventDefault();
@@ -303,7 +336,7 @@
     document.body.classList.toggle("cm-on", on);
     const b = document.getElementById("brand-btn"); if (b) b.setAttribute("aria-pressed", on ? "true" : "false");
     const bub = document.getElementById("cm-bubble"); if (bub) bub.textContent = on ? "Return" : "Click me";
-    try { sessionStorage.setItem("fp_view", on ? "map" : "dash"); } catch (e) {}
+    if (!window.CM_READONLY) { try { sessionStorage.setItem("fp_view", on ? "map" : "dash"); } catch (e) {} }
   }
   let closing = 0;
   function open(animate) {
@@ -347,6 +380,7 @@
   function toggle() { (ov && !closing) ? close() : open(); }
   window.openCoreMap = open; window.closeCoreMap = close; window.toggleCoreMap = toggle;
     addEventListener("load", () => {
+    if (window.CM_READONLY) return;
     // A fresh login always lands on the dashboard; a refresh keeps the session's last view.
     let fresh = false, view = null;
     try { fresh = sessionStorage.getItem("fp_fresh_login") === "1"; sessionStorage.removeItem("fp_fresh_login"); view = sessionStorage.getItem("fp_view"); } catch (e) {}

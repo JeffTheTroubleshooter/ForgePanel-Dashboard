@@ -53,3 +53,4 @@ body.cm-on .brand-logo { filter: drop-shadow(0 0 10px #ff2a2a); }
   .cm-bubble { animation: none; }
   .brand-logo { transition: none; }
 }
+#coremap .cm-tip .cm-ms { color: #a1a1aa; font-family: ui-monospace, monospace; font-size: 11px; margin-top: 2px; }
