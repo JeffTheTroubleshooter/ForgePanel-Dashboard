@@ -222,8 +222,11 @@
 
 <div id="dashboard">
   <header>
-    <h1 style="font-size:1.35rem; font-weight:600; letter-spacing:-0.02em;"><button class="brand-btn" onclick="openCoreMap()" title="Open Core Map"><img class="brand-logo" src="../assets/logo.svg" alt="ForgePanel logo">ForgePanel</button></h1>
-    <p style="color:var(--muted); margin-top:0.15rem; font-size:0.8rem;">Service dashboard</p>
+    <h1 class="sr-only">ForgePanel – Service Dashboard</h1>
+    <div class="brand-wrap">
+      <button class="brand-btn" id="brand-btn" onclick="toggleCoreMap()" aria-label="ForgePanel – Service Dashboard. Toggle Core Map view" aria-pressed="false" title="ForgePanel – toggle Core Map"><img class="brand-logo" src="../assets/logo.svg" alt=""></button>
+      <span class="cm-bubble" id="cm-bubble" aria-hidden="true">Click me</span>
+    </div>
   </header>
   <div class="toolbar">
     <button class="tbtn" onclick="addCustom()">Add service</button>
@@ -1186,6 +1189,7 @@ async function resetAll() {
 }
 
 async function logout() {
+  try { sessionStorage.removeItem("fp_view"); } catch { /* ignore */ }
   try { await api("logout", "POST"); } catch { /* ignore */ }
   location.href = "login.html";
 }

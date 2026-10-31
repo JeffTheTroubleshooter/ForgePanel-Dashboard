@@ -177,7 +177,7 @@ async function auth() {
   try {
     const r = await api("login", "POST", { user, pw });
     if (r.mustChange) { loginPw = pw; showScreen("change-pw"); }
-    else location.href = "dashboard.html";
+    else { try { sessionStorage.setItem("fp_fresh_login", "1"); } catch {} location.href = "dashboard.html"; }
   } catch (e) { err.textContent = e.message; }
 }
 async function saveNewCredentials() {
@@ -195,6 +195,7 @@ async function saveNewCredentials() {
   try {
     await api("credentials", "POST", { currentPw: loginPw, newUser: nu, newPw: np, secQ: q, secA: a });
     loginPw = "";
+    try { sessionStorage.setItem("fp_fresh_login", "1"); } catch {}
     location.href = "dashboard.html";
   } catch (e) { err.textContent = e.message; }
 }
