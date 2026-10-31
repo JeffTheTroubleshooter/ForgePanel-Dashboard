@@ -158,8 +158,33 @@
   .grid.empty { min-height:70px; border:1px dashed var(--border); border-radius:12px; }
   .handle { cursor:grab; color:var(--muted); font-size:0.9rem; user-select:none; padding:0 0.3rem; }
   .handle:hover { color:var(--cyan); }
-  .card.dragging { opacity:0.35; }
-  .card.drop-before { box-shadow: -4px 0 0 var(--cyan); }
+  .handle { touch-action:none; }
+  body.tile-drag { user-select:none; cursor:grabbing; }
+  body.tile-drag .card { animation:none; }
+  body.tile-drag .card:hover { transform:none; border-color:var(--border); box-shadow:none; }
+  .card.grabbed, body.tile-drag .card.grabbed:hover {
+    position:relative; z-index:50; pointer-events:none; transition:none;
+    border:2px solid #facc15; box-shadow:0 0 0 4px rgba(250,204,21,0.18), 0 18px 40px rgba(0,0,0,0.55), 0 0 24px rgba(250,204,21,0.35);
+  }
+  .group.drop-target .group-head { border-bottom-color:#facc15; }
+  .group.drop-target .gname { color:#facc15; }
+  .cmenu { position:relative; }
+  .cmenu > button { background:transparent; border:none; color:var(--muted); cursor:pointer; font-size:1rem; padding:0 0.35rem; }
+  .cmenu > button:hover { color:var(--text); }
+  .cmenu .items { display:none; position:absolute; right:0; top:1.4rem; background:#111; border:1px solid var(--border); border-radius:8px; z-index:60; min-width:150px; padding:0.25rem; }
+  .cmenu.open .items { display:block; }
+  .cmenu .items button { display:block; width:100%; text-align:left; background:transparent; border:none; color:var(--text); padding:0.45rem 0.6rem; font-size:0.8rem; border-radius:6px; cursor:pointer; }
+  .cmenu .items button:hover { background:#222; }
+  #modal-extra { text-align:left; max-height:45vh; overflow:auto; margin-bottom:1rem; }
+  #modal-extra:empty { display:none; }
+  #modal #modal-extra input { display:inline-block; width:auto; margin:0; accent-color:var(--cyan); }
+  .pick { display:flex; align-items:center; gap:0.55rem; padding:0.35rem 0.3rem; border-radius:6px; cursor:pointer; font-size:0.85rem; }
+  .pick:hover { background:#1c1c1c; }
+  .pick img { width:22px; height:22px; object-fit:contain; }
+  .pick .where { color:var(--muted); font-size:0.7rem; margin-left:auto; }
+  #settings button, .credit { white-space:nowrap; }
+  .credit { color:var(--muted); font-size:0.7rem; text-decoration:none; align-self:center; padding:0 0.2rem; }
+  .credit:hover { color:var(--cyan); }
   .spark { display:flex; align-items:center; gap:0.5rem; cursor:pointer; min-height:22px; }
   .spark svg { flex:1; height:22px; }
   .spark .pct { font-size:0.7rem; color:var(--muted); font-family:ui-monospace, monospace; min-width:52px; text-align:right; }
@@ -201,7 +226,7 @@
     <button class="tbtn" onclick="addCustom()">Add service</button>
     <button class="tbtn" onclick="addGroup()" title="Create a group, then drag tiles into it">Add group</button>
     <button class="tbtn" id="stats-btn" onclick="toggleStats()" title="CPU, RAM, disk and network of the ForgePanel server">Server stats</button>
-    <button class="tbtn" id="new-btn" onclick="openNew()" title="Services found by automatic scans">New<span class="badge" id="new-badge"></span></button>
+    <button class="tbtn" id="new-btn" onclick="openNew()" title="Scan history and new services found by automatic scans">Scan history<span class="badge" id="new-badge"></span></button>
     <select id="schedule" onchange="setSchedule(this.value)" title="Automatic network scans">
       <option value="off">Auto-scan: off</option>
       <option value="hourly">Auto-scan: hourly</option>
@@ -224,6 +249,7 @@
   <input type="file" id="import-file" accept=".json,.conf" onchange="importConfig(this)">
   <button class="danger" onclick="resetAll()" title="Clear all saved IPs, ports, and custom services">Reset</button>
   <button onclick="logout()">Log Out</button>
+  <a class="credit" href="https://github.com/JeffTheTroubleshooter" target="_blank" rel="noopener noreferrer">Created by JeffTheTroubleshooter</a>
 </div>
 
 <div id="detail" class="overlay" onclick="if (event.target === this) closeOverlay('detail')">
@@ -240,7 +266,7 @@
 
 <div id="newpanel" class="overlay" onclick="if (event.target === this) closeOverlay('newpanel')">
   <div class="panel">
-    <h3><span>New services</span><button class="btn" onclick="closeOverlay('newpanel')">Close</button></h3>
+    <h3><span>Scan history &amp; new services</span><button class="btn" onclick="closeOverlay('newpanel')">Close</button></h3>
     <div class="sub" id="new-sub"></div>
     <div id="new-list"></div>
     <div class="actions" style="margin:0.8rem 0 1.2rem;" id="new-all"></div>
@@ -254,6 +280,7 @@
     <h3 id="modal-title">Confirm</h3>
     <p id="modal-msg"></p>
     <input id="modal-input" type="password" autocomplete="current-password">
+    <div id="modal-extra"></div>
     <div class="btns">
       <button id="modal-cancel">Cancel</button>
       <button id="modal-ok" class="primary">OK</button>
@@ -262,6 +289,7 @@
 </div>
 
 <script src="../js/auth.js"></script>
+<script src="../js/griddrag.js"></script>
 <script>
 let saved = {};
 let user = "";
@@ -282,8 +310,13 @@ const services = [
 ];
 
 let modalResolve = null;
-function showModal(title, msg, okText, danger, askPassword, inputType, initial) {
+let modalCollect = null;
+function showModal(title, msg, okText, danger, askPassword, inputType, initial, extra) {
+  extra = extra || {};
   return new Promise(resolve => {
+    document.getElementById("modal-extra").innerHTML = extra.html || "";  // callers pass escaped HTML only
+    document.getElementById("modal-cancel").textContent = extra.cancelText || "Cancel";
+    modalCollect = extra.collect || null;
     document.getElementById("modal-title").textContent = title;
     document.getElementById("modal-msg").textContent = msg;
     const inp = document.getElementById("modal-input");
@@ -302,8 +335,11 @@ function showModal(title, msg, okText, danger, askPassword, inputType, initial) 
 function closeModal(ok) {
   document.getElementById("modal").classList.remove("show");
   const inp = document.getElementById("modal-input");
-  const val = inp.style.display === "block" ? (ok ? inp.value : null) : ok;
+  let val = inp.style.display === "block" ? (ok ? inp.value : null) : ok;
+  if (modalCollect) val = ok ? modalCollect(val) : null;
+  modalCollect = null;
   inp.value = "";
+  document.getElementById("modal-extra").innerHTML = "";
   if (modalResolve) modalResolve(val);
   modalResolve = null;
 }
@@ -393,15 +429,17 @@ function cardHtml(s, i) {
   const logoSrc = safeImgSrc(c.logo || s.logo, "../assets/icons/npm.png");
   const name = escapeHtml(s.name);
   return `
-      <div class="card" style="animation-delay:${i * 25}ms" id="card-${i}" data-key="${escapeHtml(s.key)}"
-           ondragover="dragOver(event)" ondrop="dropOnCard(event, '${escapeHtml(s.key)}')">
+      <div class="card" style="animation-delay:${i * 25}ms" id="card-${i}" data-key="${escapeHtml(s.key)}" data-i="${i}">
         <div class="card-header">
           <div class="icon" onclick="document.getElementById('file-${i}').click()" title="Change logo">
             <img src="${escapeHtml(logoSrc)}" alt="${name}" id="img-${i}">
           </div>
           <span style="flex:1"></span>
-          <span class="handle" draggable="true" title="Drag to reorder or move to a group"
-                ondragstart="dragTile(event, '${escapeHtml(s.key)}', ${i})" ondragend="dragEnd()">&#8942;&#8942;</span>
+          <span class="handle" title="Drag to reorder or onto a group to move it" onpointerdown="tilePointerDown(event, ${i})">&#8942;&#8942;</span>
+          <div class="cmenu" id="cmenu-${i}">
+            <button onclick="toggleMenu(event, ${i})" title="More">&#8942;</button>
+            <div class="items"><button onclick="moveToGroupMenu(${i})">Move to group…</button></div>
+          </div>
           <div class="status" id="status-${i}"></div>
           <input type="file" id="file-${i}" accept="image/*" onchange="changeLogo(${i}, this)">
         </div>
@@ -431,7 +469,7 @@ function groupHtml(id, name, collapsed, items, all, isDefault) {
         <span class="gcount">${items.length}</span>
         ${isDefault ? "" : `<button onclick="renameGroup('${gid}')">Rename</button><button onclick="deleteGroup('${gid}')" style="color:var(--red)">Delete</button>`}
       </div>
-      <div class="grid${items.length ? "" : " empty"}" ondragover="dragOver(event)" ondrop="dropOnGroup(event, '${gid}')">
+      <div class="grid${items.length ? "" : " empty"}" data-gid="${gid}">
         ${items.map(i => cardHtml(all[i], i)).join("")}
       </div>
     </section>`;
@@ -446,22 +484,27 @@ function render() {
   refreshUptime();
 }
 
-// drag and drop
+// ── group reorder (HTML5 drag on the group handle) ──
 let drag = null;
-function dragTile(e, key, i) {
-  drag = { type: "tile", key };
-  e.dataTransfer.effectAllowed = "move";
-  e.dataTransfer.setData("text/plain", key);
-  const card = document.getElementById(`card-${i}`);
-  if (card) { card.classList.add("dragging"); try { e.dataTransfer.setDragImage(card, 20, 20); } catch {} }
-}
 function dragGroup(e, gid) {
   drag = { type: "group", gid };
   e.dataTransfer.effectAllowed = "move";
   e.dataTransfer.setData("text/plain", gid);
 }
-function dragEnd() { drag = null; document.querySelectorAll(".dragging").forEach(x => x.classList.remove("dragging")); }
+function dragEnd() { drag = null; }
 function dragOver(e) { if (drag) e.preventDefault(); }
+async function dropOnGroup(e, gid) {
+  e.preventDefault(); e.stopPropagation();
+  if (!drag || drag.type !== "group") return;
+  const L = layout();
+  const from = L.groups.findIndex(g => g.id === drag.gid);
+  const to = gid === "_ungrouped" ? L.groups.length - 1 : L.groups.findIndex(g => g.id === gid);
+  dragEnd();
+  if (from < 0 || to < 0 || from === to) return;
+  const [g] = L.groups.splice(from, 1);
+  L.groups.splice(to, 0, g);
+  await persist(); render(); checkAll();
+}
 
 function removeKey(key) {
   const L = layout();
@@ -483,47 +526,209 @@ function currentOrder() {
   groups.forEach(({ g, items }) => g.items = items.map(i => all[i].key));
   L.ungrouped = ung.map(i => all[i].key);
 }
-async function dropOnCard(e, targetKey) {
-  e.preventDefault(); e.stopPropagation();
-  if (!drag) return;
-  if (drag.type === "group") { const sec = e.target.closest(".group"); if (sec) return dropOnGroup(e, sec.dataset.gid); return; }
-  if (drag.key === targetKey) return dragEnd();
-  currentOrder();
-  const sec = e.target.closest(".group");
-  const list = listFor(sec ? sec.dataset.gid : "_ungrouped");
-  if (!list) return;
-  const key = drag.key;
-  removeKey(key);
-  const idx = list.indexOf(targetKey);
-  list.splice(idx < 0 ? list.length : idx, 0, key);
-  dragEnd();
-  await persist(); render(); checkAll();
+function groupName(gid) {
+  if (gid === "_ungrouped") return layout().groups.length ? "Ungrouped" : "Services";
+  const g = layout().groups.find(x => x.id === gid);
+  return g ? (g.name || "Group") : "";
 }
-async function dropOnGroup(e, gid) {
-  e.preventDefault(); e.stopPropagation();
-  if (!drag) return;
-  const L = layout();
-  if (drag.type === "group") {
-    const from = L.groups.findIndex(g => g.id === drag.gid);
-    let to = gid === "_ungrouped" ? L.groups.length : L.groups.findIndex(g => g.id === gid);
-    if (from < 0 || to < 0 || from === to) return dragEnd();
-    const [g] = L.groups.splice(from, 1);
-    L.groups.splice(to, 0, g);
-  } else {
-    currentOrder();
-    const list = listFor(gid);
-    if (!list) return;
-    removeKey(drag.key);
-    list.push(drag.key);
+function gridOf(card) { const g = card.closest(".grid"); return g ? g.dataset.gid : null; }
+const confirmMove = (svc, grp) => showModal("Move Tile", `Do you wish to move the ${svc} service tile to group ${grp}?`, "Yes", false, null, null, null, { cancelText: "No" });
+
+// ── tile drag: pointer events (mouse + touch), live gap with FLIP animation ──
+const FLIP_MS = 180;
+let tdrag = null;
+function tilePointerDown(e, i) {
+  if (e.button !== 0 || tdrag) return;
+  const card = document.getElementById(`card-${i}`);
+  if (!card) return;
+  e.preventDefault();
+  tdrag = { i, card, id: e.pointerId, x0: e.clientX, y0: e.clientY, started: false, fromGid: gridOf(card), overGid: null, raf: 0, lx: e.clientX, ly: e.clientY };
+  window.addEventListener("pointermove", tileMove);
+  window.addEventListener("pointerup", tileUp);
+  window.addEventListener("pointercancel", tileCancel);
+}
+function centerOf(el) { const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; }
+function startTileDrag() {
+  const d = tdrag;
+  d.started = true;
+  document.body.classList.add("tile-drag");
+  d.card.classList.add("grabbed");
+  const c = centerOf(d.card);
+  d.gx = d.x0 - c.x; d.gy = d.y0 - c.y;   // pointer offset from the tile center
+  d.tx = 0; d.ty = 0;
+  placeGrabbed();
+}
+function placeGrabbed() {
+  // the grabbed tile stays in the grid flow (it IS the gap) and is translated to follow the pointer
+  const d = tdrag, el = d.card;
+  const c = centerOf(el);
+  const slotX = c.x - d.tx, slotY = c.y - d.ty;   // center without our transform (scale keeps the center)
+  d.tx = d.lx - d.gx - slotX; d.ty = d.ly - d.gy - slotY;
+  el.style.transform = `translate(${d.tx}px, ${d.ty}px) scale(1.04)`;
+}
+function layoutRects(grid, skip) {
+  // offset* ignore CSS transforms, so in-flight FLIP animations cannot cause jitter
+  const gr = grid.getBoundingClientRect();
+  const cards = [...grid.children].filter(c => c.classList.contains("card") && c !== skip);
+  return { cards, rects: cards.map(c => ({ left: gr.left + c.offsetLeft - grid.offsetLeft, top: gr.top + c.offsetTop - grid.offsetTop, width: c.offsetWidth, height: c.offsetHeight })) };
+}
+function flipMove(mutate) {
+  const els = [...document.querySelectorAll("#groups .card")].filter(c => c !== tdrag.card);
+  const first = new Map(els.map(el => [el, el.getBoundingClientRect()]));
+  mutate();
+  els.forEach(el => {
+    const a = first.get(el), b = el.getBoundingClientRect();
+    const dx = a.left - b.left, dy = a.top - b.top;
+    if (!dx && !dy) return;
+    el.style.transition = "none";
+    el.style.transform = `translate(${dx}px, ${dy}px)`;
+    el.getBoundingClientRect();   // force reflow
+    el.style.transition = `transform ${FLIP_MS}ms ease`;
+    el.style.transform = "";
+    clearTimeout(el._flip);
+    el._flip = setTimeout(() => { el.style.transition = ""; }, FLIP_MS + 20);
+  });
+}
+function tileMove(e) {
+  const d = tdrag;
+  if (!d || e.pointerId !== d.id) return;
+  d.lx = e.clientX; d.ly = e.clientY;
+  if (!d.started) { if (Math.hypot(d.lx - d.x0, d.ly - d.y0) < 5) return; startTileDrag(); }
+  if (!d.raf) d.raf = requestAnimationFrame(tileFrame);
+}
+function tileFrame() {
+  const d = tdrag;
+  if (!d) return;
+  d.raf = 0;
+  const { lx: x, ly: y } = d;
+  if (y < 40) window.scrollBy(0, -12); else if (y > innerHeight - 70) window.scrollBy(0, 12);
+  const under = document.elementFromPoint(x, y);
+  const head = under && under.closest(".group-head");
+  let grid = under && under.closest(".grid");
+  if (head) grid = head.parentElement.querySelector(".grid");
+  if (!grid) {   // between tiles / outside: keep the grid of the nearest section under the pointer
+    const sec = under && under.closest(".group");
+    grid = sec ? sec.querySelector(".grid") : null;
   }
-  dragEnd();
+  document.querySelectorAll(".group.drop-target").forEach(g => g.classList.remove("drop-target"));
+  if (grid) {
+    const sec = grid.closest(".group");
+    d.overGid = grid.dataset.gid;
+    if (d.overGid !== d.fromGid) sec.classList.add("drop-target");
+    if (!sec.classList.contains("collapsed")) {
+      const { cards, rects } = layoutRects(grid, d.card);
+      const idx = insertionIndex(rects, x, y);
+      const ref = cards[idx] || null;
+      const inPlace = d.card.parentElement === grid && (ref ? d.card.nextElementSibling === ref : d.card === grid.lastElementChild);
+      if (!inPlace) flipMove(() => { grid.insertBefore(d.card, ref); grid.classList.remove("empty"); });
+    }
+  }
+  placeGrabbed();
+}
+function endListeners() {
+  window.removeEventListener("pointermove", tileMove);
+  window.removeEventListener("pointerup", tileUp);
+  window.removeEventListener("pointercancel", tileCancel);
+}
+function clearTileDrag() {
+  const d = tdrag;
+  endListeners();
+  if (d && d.raf) cancelAnimationFrame(d.raf);
+  tdrag = null;
+  document.body.classList.remove("tile-drag");
+  document.querySelectorAll(".group.drop-target").forEach(g => g.classList.remove("drop-target"));
+  return d;
+}
+function tileCancel() { const d = clearTileDrag(); if (d && d.started) { render(); checkAll(); } }
+function orderFromDom() {
+  const L = layout();
+  currentOrder();
+  document.querySelectorAll("#groups .grid").forEach(grid => {
+    const list = listFor(grid.dataset.gid);
+    const sec = grid.closest(".group");
+    if (!list || sec.classList.contains("collapsed")) return;
+    list.splice(0, list.length, ...[...grid.querySelectorAll(":scope > .card")].map(c => c.dataset.key));
+  });
+  return L;
+}
+async function tileUp(e) {
+  const d = tdrag;
+  if (!d || e.pointerId !== d.id) return;
+  if (d.raf) { cancelAnimationFrame(d.raf); tileFrame(); }
+  clearTileDrag();
+  if (!d.started) return;
+  // settle the tile into its slot
+  d.card.style.transition = `transform ${FLIP_MS}ms ease`;
+  d.card.style.transform = "";
+  setTimeout(() => d.card.classList.remove("grabbed"), FLIP_MS);
+  const target = d.overGid || d.fromGid;
+  const key = d.card.dataset.key;
+  if (target !== d.fromGid) {
+    const svc = getAllServices()[d.i];
+    const ok = await confirmMove(svc ? svc.name : key, groupName(target));
+    if (!ok) { render(); checkAll(); return; }   // No: snap back
+    const collapsedTarget = d.card.parentElement.dataset.gid !== target;
+    orderFromDom();
+    if (collapsedTarget) { removeKey(key); listFor(target).push(key); }
+  } else {
+    orderFromDom();
+  }
+  await persist();
+  setTimeout(() => { render(); checkAll(); }, FLIP_MS);
+}
+
+// ── tile ⋮ menu ──
+function toggleMenu(e, i) {
+  e.stopPropagation();
+  const m = document.getElementById(`cmenu-${i}`);
+  const open = !m.classList.contains("open");
+  document.querySelectorAll(".cmenu.open").forEach(x => x.classList.remove("open"));
+  if (open) m.classList.add("open");
+}
+document.addEventListener("click", () => document.querySelectorAll(".cmenu.open").forEach(x => x.classList.remove("open")));
+function groupChoices(current) {
+  const L = layout();
+  const opts = L.groups.map(g => [g.id, g.name || "Group"]).concat([["_ungrouped", "Ungrouped"]]);
+  return opts.filter(([id]) => id !== current).map(([id, name], k) => `
+    <label class="pick"><input type="radio" name="mv-group" value="${escapeHtml(id)}"${k === 0 ? " checked" : ""}> ${escapeHtml(name)}</label>`).join("");
+}
+async function moveToGroupMenu(i) {
+  document.querySelectorAll(".cmenu.open").forEach(x => x.classList.remove("open"));
+  const s = getAllServices()[i];
+  const card = document.getElementById(`card-${i}`);
+  if (!s || !card) return;
+  const from = gridOf(card);
+  if (!layout().groups.length) { await showModal("Move to Group", "There are no groups yet. Use Add group first.", "OK"); return; }
+  const target = await showModal("Move to Group", `Move the ${s.name} service tile to:`, "Move", false, null, null, null, {
+    html: groupChoices(from),
+    collect: () => { const r = document.querySelector('input[name="mv-group"]:checked'); return r ? r.value : null; },
+  });
+  if (!target) return;
+  if (!await confirmMove(s.name, groupName(target))) return;
+  currentOrder();
+  removeKey(s.key);
+  const list = listFor(target);
+  if (!list) return;
+  list.push(s.key);
   await persist(); render(); checkAll();
 }
 
 async function addGroup() {
-  const name = await askText("New Group", "Name the group, then drag tiles into it.", "Group name");
-  if (!name || !name.trim()) return;
-  layout().groups.push({ id: "g" + newId(), name: name.trim().slice(0, 60), collapsed: false, items: [] });
+  const { all, groups } = sections();
+  const where = new Map();
+  groups.forEach(({ g, items }) => items.forEach(i => where.set(all[i].key, g.name || "Group")));
+  const html = `<div class="desc" style="margin-bottom:0.4rem;">Services to put in this group (optional):</div>` + all.map(s => `
+    <label class="pick"><input type="checkbox" class="ng-pick" value="${escapeHtml(s.key)}">
+      <img src="${escapeHtml(safeImgSrc(cfgFor(s).logo || s.logo, "../assets/icons/npm.png"))}" alt="">
+      <span>${escapeHtml(s.name)}</span>${where.has(s.key) ? `<span class="where">in ${escapeHtml(where.get(s.key))}</span>` : (s.custom ? `<span class="where">custom</span>` : "")}</label>`).join("");
+  const res = await showModal("New Group", "Name the group and choose its services. You can also drag tiles into it later.", "Create", false, "Group name", "text", "", {
+    html,
+    collect: name => ({ name, keys: [...document.querySelectorAll(".ng-pick:checked")].map(c => c.value) }),
+  });
+  if (!res || !res.name || !res.name.trim()) return;
+  currentOrder();
+  res.keys.forEach(removeKey);
+  layout().groups.push({ id: "g" + newId(), name: res.name.trim().slice(0, 60), collapsed: false, items: res.keys });
   await persist(); render(); checkAll();
 }
 async function renameGroup(gid) {

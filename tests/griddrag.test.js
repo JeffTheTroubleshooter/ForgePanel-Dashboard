@@ -1,0 +1,23 @@
+// node tests/griddrag.test.js  — unit test for the tile insertion index
+const { insertionIndex: f } = require("../js/griddrag.js");
+const W = 280, H = 200, G = 16, cols = 3, n = 7;
+const R = [...Array(n)].map((_, i) => ({ left: (i % cols) * (W + G), top: Math.floor(i / cols) * (H + G), width: W, height: H }));
+let fail = 0;
+const t = (x, y, e, m) => { const g = f(R, x, y); console.log((g === e ? "PASS " : "FAIL ") + m + " -> " + g); if (g !== e) fail++; };
+t(10, 10, 0, "left half of first tile");
+t(W * 0.9, 50, 1, "right half of tile 0");
+t(W + G + 10, 50, 1, "left half of tile 1");
+t(2 * (W + G) + W - 5, 50, 3, "right edge of row 0");
+t(10, H + G + 50, 3, "row 1 start");
+t(W + G + W * 0.7, H + G + 50, 5, "row 1 middle, right half");
+t(10, 2 * (H + G) + 20, 6, "row 2 first");
+t(2 * (W + G) + 100, 2 * (H + G) + 20, 7, "empty slot after last tile");
+t(500, 5000, 7, "far below the grid");
+t(10, -500, 0, "above the grid");
+t(10, H + G / 2 - 1, 0, "row gap, upper half -> row 0");
+t(10, H + G / 2 + 1, 3, "row gap, lower half -> row 1");
+const odd = [{ left: 0, top: 0, width: 100, height: 300 }, { left: 116, top: 0, width: 100, height: 120 }, { left: 0, top: 316, width: 100, height: 120 }];
+const g = f(odd, 120, 200); console.log((g === 1 ? "PASS " : "FAIL ") + "uneven row heights -> " + g); if (g !== 1) fail++;
+console.log(f([], 1, 1) === 0 ? "PASS empty grid" : (fail++, "FAIL empty grid"));
+console.log(fail ? fail + " FAILED" : "ALL PASS");
+process.exitCode = fail ? 1 : 0;
