@@ -58,14 +58,14 @@ ForgePanel-Dashboard/
 
 ## Automatic Install (with service)
 
-`forgepanel-install.sh` installs ForgePanel and sets it up as a service that starts on boot. It works on Debian/Ubuntu, Fedora/RHEL, Arch, openSUSE and Alpine. It installs python3 and git if needed, clones the repo (default `/opt/forgepanel`), asks which port to use (default `8080`), and creates a `forgepanel` systemd service (OpenRC on Alpine).
+`forgepanel-install.sh` installs ForgePanel and sets it up as a service that starts on boot. It works on Debian/Ubuntu, Fedora/RHEL, Arch, openSUSE and Alpine. It installs python3 and git if needed, clones the repo (default `/opt/forgepanel`), asks which port to use (default `8084`), and creates a `forgepanel` systemd service (OpenRC on Alpine).
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/JeffTheTroubleshooter/ForgePanel-Dashboard/main/forgepanel-install.sh -o forgepanel-install.sh
 bash forgepanel-install.sh
 ```
 
-Then open `http://<your-server-ip>:8080`. To manage the service:
+Then open `http://<your-server-ip>:8084`. To manage the service:
 
 ```bash
 sudo systemctl status forgepanel
@@ -89,10 +89,10 @@ Serve the folder with any web server and open `index.html`.
 
 ```bash
 cd ForgePanel-Dashboard
-python3 -m http.server 8080
+python3 -m http.server 8084
 ```
 
-Then open `http://localhost:8080`.
+Then open `http://localhost:8084`.
 
 ## License
 

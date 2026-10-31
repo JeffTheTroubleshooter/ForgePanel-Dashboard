@@ -13,7 +13,7 @@ set -euo pipefail
 
 START_TIME=$(date +%s)
 REPO_URL="https://github.com/JeffTheTroubleshooter/ForgePanel-Dashboard.git"
-DEFAULT_PORT=8080
+DEFAULT_PORT=8084
 DEFAULT_DIR="/opt/forgepanel"
 SERVICE_NAME="forgepanel"
 
