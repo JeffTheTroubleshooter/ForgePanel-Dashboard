@@ -13,6 +13,12 @@
     if (el.classList.contains("offline")) return "off";
     return "unk";
   }
+  const imgs = new Map();
+  function imgFor(src) {
+    if (!src) return null;
+    if (!imgs.has(src)) { const im = new Image(); im.onload = () => { if (reduce.matches) { raf = 0; kick(); } }; im.src = src; imgs.set(src, im); }
+    return imgs.get(src);
+  }
   let groups = [];   // group cores: { name, members: [node], x, y, st, born }
   function build() {
     const all = getAllServices();
@@ -21,7 +27,8 @@
     try { sec = sections(); } catch (e) { sec = null; }
     const mk = (i) => {
       const s = all[i], key = s.key || ("c:" + i), o = old.get(key);
-      return { key, i, name: s.name, url: urlFor(s), st: statusOf(i), born: o ? o.born : performance.now() + i * 40, g: null };
+      let src = null; try { src = safeImgSrc(cfgFor(s).logo || s.logo, ""); } catch (e) { src = s.logo || null; }
+      return { key, i, name: s.name, img: imgFor(src), url: urlFor(s), st: statusOf(i), born: o ? o.born : performance.now() + i * 40, g: null };
     };
     const oldG = new Map(groups.map(g => [g.name, g]));
     groups = []; nodes = [];
@@ -135,20 +142,28 @@
     for (const n of nodes) {
       const a = still ? 1 : Math.min(1, Math.max(0, (now - n.born) / 600));
       if (a <= 0) continue;
-      const c = COL[n.st], w = 84, h = 30, hv = nodes[hover] === n;
+      const c = COL[n.st], S = 46, hv = nodes[hover] === n;
       ctx.save(); ctx.globalAlpha = a;
-      if (hv) { ctx.shadowColor = c; ctx.shadowBlur = 16; }
-      rr(n.x - w / 2, n.y - h / 2, w, h, 8); ctx.fillStyle = "#141414"; ctx.fill();
-      ctx.lineWidth = hv ? 2.5 : 1.5; ctx.strokeStyle = c; ctx.stroke(); ctx.shadowBlur = 0;
-      ctx.fillStyle = "#e5e5e5";
-      let label = n.name; while (label.length > 3 && ctx.measureText(label).width > w - 12) label = label.slice(0, -2) + "…";
-      ctx.fillText(label, n.x, n.y); ctx.restore();
+      ctx.shadowColor = c; ctx.shadowBlur = hv ? 18 : 8;
+      rr(n.x - S / 2, n.y - S / 2, S, S, 10); ctx.fillStyle = "#141414"; ctx.fill();
+      ctx.lineWidth = hv ? 2.5 : 1.8; ctx.strokeStyle = c; ctx.stroke(); ctx.shadowBlur = 0;
+      const im = n.img;
+      if (im && im.complete && im.naturalWidth) {
+        const k = Math.min(30 / im.naturalWidth, 30 / im.naturalHeight), iw = im.naturalWidth * k, ih = im.naturalHeight * k;
+        ctx.drawImage(im, n.x - iw / 2, n.y - ih / 2, iw, ih);
+      } else {
+        ctx.font = "600 18px Inter, system-ui, sans-serif"; ctx.fillStyle = "#e5e5e5";
+        ctx.fillText((n.name || "?").trim().charAt(0).toUpperCase() || "?", n.x, n.y + 1);
+      }
+      ctx.font = "500 10px Inter, system-ui, sans-serif"; ctx.fillStyle = "#a1a1aa";
+      let label = n.name || ""; while (label.length > 3 && ctx.measureText(label).width > 80) label = label.slice(0, -2) + "…";
+      ctx.fillText(label, n.x, n.y + S / 2 + 9); ctx.restore();
     }
     raf = still ? 0 : requestAnimationFrame(frame);
   }
   function kick() { if (!raf) raf = requestAnimationFrame(frame); }
   function hit(e) {
-    for (let k = nodes.length - 1; k >= 0; k--) { const n = nodes[k]; if (Math.abs(e.clientX - n.x) <= 42 && Math.abs(e.clientY - n.y) <= 15) return k; }
+    for (let k = nodes.length - 1; k >= 0; k--) { const n = nodes[k]; if (Math.abs(e.clientX - n.x) <= 24 && Math.abs(e.clientY - n.y) <= 24) return k; }
     return -1;
   }
   const LBL = { on: "Connected", off: "Not connected", unk: "Not detected" };
