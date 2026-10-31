@@ -153,6 +153,8 @@
   <button onclick="exportConfig()" title="Download an encrypted backup of your settings">Export</button>
   <button onclick="document.getElementById('import-file').click()" title="Restore settings from a backup file">Import</button>
   <input type="file" id="import-file" accept=".json" onchange="importConfig(this)">
+  <button onclick="importScan()" title="Add services found by scan/scan.py (loads ../scan/results.enc)">Import Scan</button>
+  <input type="file" id="scan-file" accept=".enc,.json" onchange="importScanFile(this)">
   <button class="danger" onclick="resetAll()" title="Clear all saved IPs, ports, and custom services">Reset</button>
   <button onclick="logout()">Log Out</button>
 </div>
@@ -248,8 +250,8 @@ function getConfig(name) {
 function urlFor(name) {
   const c = getConfig(name);
   if (!c.ip) return "";
-  const proto = (c.port === 443) ? "https" : "http";
-  const port = (c.port === 80 || c.port === 443) ? "" : `:${c.port}`;
+  const proto = c.scheme || ((c.port === 443) ? "https" : "http");
+  const port = ((proto === "http" && c.port === 80) || (proto === "https" && c.port === 443)) ? "" : `:${c.port}`;
   return `${proto}://${c.ip}${port}`;
 }
 
@@ -419,6 +421,87 @@ async function importConfig(input) {
     await showModal("Import Failed", "Wrong password or corrupted file.", "OK");
   }
   input.value = "";
+}
+
+// ── Network scan import (results from scan/scan.py) ──
+async function fetchScanFile(name) {
+  try {
+    const r = await fetch(`../scan/${name}`, { cache: "no-store" });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch { return null; }
+}
+
+async function importScan() {
+  let payload = null;
+  if (hasSubtle) payload = await fetchScanFile("results.enc");
+  if (!payload) payload = await fetchScanFile("results.json");
+  if (!payload) {
+    if (!hasSubtle && await fetchScanFile("results.enc")) {
+      await showModal("Encrypted Scan", "scan/results.enc was found, but encrypted files can only be opened over HTTPS or http://localhost (this browser has no crypto.subtle on plain HTTP). Open the dashboard via localhost/HTTPS, or run scan.py with --plain to make results.json.", "OK");
+      return;
+    }
+    if (await showModal("No Scan Found", "No scan/results.enc or scan/results.json was found on the server. Run scan/scan.py first, or pick a results file from your computer.", "Choose File"))
+      document.getElementById("scan-file").click();
+    return;
+  }
+  await applyScan(payload);
+}
+
+async function importScanFile(input) {
+  const file = input.files[0];
+  input.value = "";
+  if (!file) return;
+  try { await applyScan(JSON.parse(await file.text())); }
+  catch { await showModal("Import Scan Failed", "That file is not valid scan JSON.", "OK"); }
+}
+
+// Scan data comes from other devices on the network (HTTP titles), and render()
+// builds HTML from these strings, so strip markup characters.
+const scanText = (v, max) => String(v || "").replace(/[<>"'`&]/g, "").slice(0, max);
+
+async function applyScan(payload) {
+  if (!payload.plain && !hasSubtle) {
+    await showModal("Encrypted Scan", "Encrypted scan results need HTTPS or http://localhost to open. Over plain HTTP use a results.json made with scan.py --plain.", "OK");
+    return;
+  }
+  let data;
+  try { data = await decrypt(payload, password); }
+  catch {
+    await showModal("Import Scan Failed", "Could not decrypt the scan. It must be encrypted with your current dashboard password.", "OK");
+    return;
+  }
+  const found = (data && Array.isArray(data.services)) ? data.services : [];
+  const officialNames = services.map(s => s.name);
+  saved._custom = saved._custom || [];
+  const taken = new Set();
+  officialNames.forEach(n => { const c = saved[n]; if (c && c.ip) taken.add(`${c.ip}:${c.port}`); });
+  saved._custom.forEach(c => { if (c.ip) taken.add(`${c.ip}:${c.port}`); });
+  let addedOfficial = 0, addedCustom = 0, skipped = 0;
+  for (const f of found) {
+    const ip = scanText(f.ip, 253).trim(), port = parseInt(f.port);
+    if (!/^[A-Za-z0-9.:\-\[\]]+$/.test(ip) || port < 1 || port > 65535) continue;
+    if (!ip || !port) continue;
+    const key = `${ip}:${port}`;
+    if (taken.has(key)) { skipped++; continue; }
+    const scheme = f.scheme === "https" ? "https" : "http";
+    const off = officialNames.find(n => n === f.match);
+    if (off && !(saved[off] && saved[off].ip)) {
+      const c = getConfig(off);
+      saved[off] = { ...c, ip, port, scheme };
+      addedOfficial++;
+    } else {
+      const name = off ? `${off} (${ip})` : scanText(f.name || `Service :${port}`, 60);
+      const desc = f.title ? `Found by scan: ${scanText(f.title, 80)}` : "Found by network scan";
+      saved._custom.push({ name, desc, port, ip, scheme, logo: null });
+      addedCustom++;
+    }
+    taken.add(key);
+  }
+  await persist();
+  render();
+  checkAll();
+  await showModal("Scan Imported", `${found.length} service(s) in scan: ${addedOfficial} official tile(s) filled, ${addedCustom} custom service(s) added, ${skipped} duplicate(s) skipped.`, "OK");
 }
 
 async function resetAll() {

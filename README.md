@@ -10,6 +10,7 @@ Self-hosted dashboard for accessing all your local and private services from one
 - Export / Import / Reset
 - Forgot password and username recovery
 - Animated background
+- Network scan that finds services and adds them automatically
 
 ## Screenshots
 
@@ -53,8 +54,22 @@ ForgePanel-Dashboard/
 │   └── icons/
 ├── config/
 │   └── forgepanel.conf
-└── custom_services/
+├── custom_services/
+└── scan/
+    ├── scan.py
+    ├── scan.conf
+    └── results.example.json
 ```
+
+## Network Scan
+
+`scan/scan.py` (Python 3 standard library) scans your LAN for well-known self-hosted service ports (Jellyfin, Immich, Nextcloud, Proxmox, Portainer, Home Assistant, Plex, Grafana and more, set in `scan/scan.conf`) and identifies them from the HTTP title or Server header.
+
+```bash
+python3 scan/scan.py        # asks for your dashboard password
+```
+
+Results go to `scan/results.enc`, encrypted with your dashboard password (AES-GCM, same key settings as the dashboard; needs the `python3-cryptography` package, otherwise an unencrypted `results.json` is written with a warning). In the dashboard, click **Import Scan**: found official services fill their tiles, everything else is added as a custom service, and duplicates are skipped. Encrypted results can only be opened on HTTPS or `http://localhost`; over plain HTTP use `scan.py --plain`. Details in [scan/README.md](scan/README.md).
 
 ## Automatic Install (with service)
 

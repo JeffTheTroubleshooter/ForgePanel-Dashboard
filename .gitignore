@@ -1,0 +1,4 @@
+# Real network scan results (contain your LAN layout) - never commit
+scan/results.enc
+scan/results.json
+__pycache__/

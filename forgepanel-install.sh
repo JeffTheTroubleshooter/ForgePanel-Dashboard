@@ -98,6 +98,22 @@ install_requirements() {
   ensure_package git git
 }
 
+# Optional: Python "cryptography" so scan/scan.py can write encrypted results.enc
+install_scan_optional() {
+  if python3 -c "import cryptography" >/dev/null 2>&1; then
+    ok "python3 cryptography already installed (network scan encryption)"
+    return 0
+  fi
+  ask_yn "Install optional python3 cryptography package for encrypted network scan results?" || return 0
+  case "$PKG" in
+    apt)    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y python3-cryptography || true ;;
+    dnf)    sudo dnf install -y python3-cryptography || true ;;
+    pacman) sudo pacman -Sy --noconfirm python-cryptography || true ;;
+    zypper) sudo zypper --non-interactive install python3-cryptography || true ;;
+    apk)    sudo apk add --no-cache py3-cryptography || true ;;
+  esac
+}
+
 # ── prompts ────────────────────────────────────────────────────────────────
 ask_user() {
   echo
@@ -269,6 +285,7 @@ main() {
       echo "==============================="
       detect_distro
       install_requirements
+      install_scan_optional
       ask_user
       setup_files
       create_service

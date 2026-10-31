@@ -1,0 +1,19 @@
+{
+  "format": "forgepanel-scan",
+  "version": 1,
+  "plain": true,
+  "warning": "Example only. Fake data. Real scans go to results.enc (encrypted) or results.json (plain).",
+  "data": {
+    "format": "forgepanel-scan",
+    "version": 1,
+    "generated": "2026-01-01T12:00:00+00:00",
+    "subnet": "192.168.1.0/24",
+    "hosts_scanned": 254,
+    "services": [
+      { "ip": "192.168.1.20", "port": 8096, "name": "Jellyfin", "match": "Jellyfin", "identified_by": "fingerprint", "scheme": "http", "http": true, "title": "Jellyfin", "server": "Kestrel" },
+      { "ip": "192.168.1.21", "port": 8006, "name": "Proxmox", "match": "Proxmox", "identified_by": "port", "scheme": "https", "http": true, "title": "pve - Proxmox Virtual Environment", "server": "pve-api-daemon/3.0" },
+      { "ip": "192.168.1.30", "port": 3000, "name": "Grafana", "match": "custom", "identified_by": "fingerprint", "scheme": "http", "http": true, "title": "Grafana", "server": "" },
+      { "ip": "192.168.1.31", "port": 8123, "name": "Home Assistant", "match": "custom", "identified_by": "port", "scheme": "http", "http": true, "title": "Home Assistant", "server": "Python/3.12 aiohttp" }
+    ]
+  }
+}
