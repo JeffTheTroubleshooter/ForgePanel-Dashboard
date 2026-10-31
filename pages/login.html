@@ -177,8 +177,14 @@ async function auth() {
   const pw = document.getElementById("pw").value;
   const err = document.getElementById("login-error");
   if (!user || !pw) { err.textContent = "Enter username and password"; return; }
-  const acc = await loadAccount();
-  const pwHash = await hashPw(pw);
+  let acc, pwHash;
+  try {
+    acc = await loadAccount();
+    pwHash = await hashPw(pw);
+  } catch (e) {
+    err.textContent = "Sign-in error: " + (e && e.message ? e.message : e);
+    return;
+  }
   if (!acc || acc.user !== user || acc.pwHash !== pwHash) {
     err.textContent = "Invalid username or password";
     return;
