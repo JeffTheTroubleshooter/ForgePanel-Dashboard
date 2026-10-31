@@ -6,6 +6,8 @@ Self-hosted dashboard for accessing all your local and private services from one
 
 ## Core Map
 
+![Core Map: animated view of every service around the ForgePanel core](screenshots/coremap.gif)
+
 Click the ForgePanel logo in the dashboard header to open **Core Map**, a full-screen animated view. The ForgePanel core sits in the center and every service (official and custom) is a tile on rings around it, joined to the core by a line:
 
 - **Green**: connected/online. Data pulses travel along the line toward the core.
@@ -13,6 +15,8 @@ Click the ForgePanel logo in the dashboard header to open **Core Map**, a full-s
 - **Yellow**: not detected (never checked, no address, or no status). The line is dashed and pulses slowly.
 
 Hover a tile to see its name, URL and status. Click it to open the service. While Core Map is open it re-checks statuses through the server-side `/api/check` every 5 seconds. Press **Esc** or the ✕ button to close it. If your system asks for reduced motion, it draws a still map.
+
+![Core Map with groups](screenshots/coremap.png)
 
 ## Features
 
@@ -95,6 +99,10 @@ python3 scan/scan.py
 
 Details in [scan/README.md](scan/README.md).
 
+A running scan can be stopped with **Cancel scan**:
+
+![Cancel scan button](screenshots/scan-cancel.png)
+
 ## Auto-scans, Uptime, Groups and Server Stats
 
 - **Scheduled auto-scans** – pick *Off / Hourly / Daily / Custom* in the toolbar (or set `[schedule] interval` and `minutes` in `scan/scan.conf`; the dashboard setting wins). Scans run in a background thread. Services you don't have a tile for show up under the **Scan history** button's badge, where you can accept (adds tiles) or dismiss (hidden for good). The last 50 scans are kept as history.
@@ -119,7 +127,11 @@ Each tile's menu (⋮ → **Check & widget…**) picks how the service is checke
 
 **Push monitors.** Choosing Push creates a unique URL, for example `http://forgepanel:8084/api/push/<token>`. Call it from a cron job or script, e.g. `curl -fsS http://forgepanel:8084/api/push/<token>`. Add `?status=down` to report a failure. The service is marked down if no push arrives within the interval (+5 s grace). The URL needs no login: the token is the only credential. It is stored hashed in SQLite, is never written to the log, and can be regenerated or revoked from the same dialog.
 
-## Notifications
+## Notifications (Experimental)
+
+> **Experimental:** may not work with every setup yet.
+
+![Settings dialog: notifications and public status page](screenshots/settings.png)
 
 **Settings → Notifications** sends alerts to a **Discord webhook** and/or **ntfy** (server URL, topic, optional access token):
 
@@ -158,6 +170,8 @@ Optional, per tile (**⋮ → Check & widget…**). Each widget shows one line o
 ## Public Status Page
 
 **Settings → Public status page** turns on a read-only page at `/status` (off by default). It shows every monitored service with its status, 24 h uptime, a 24-hour bar and response time, grouped like the dashboard, plus an optional read-only Core Map. It shows no secrets, URLs or push tokens. IPs and ports are hidden unless "Show IPs and ports" is ticked. When the page is off, `/api/public/status` returns 404. After a server restart it shows "unavailable" until an admin signs in once (the data key only lives in memory).
+
+![Public status page](screenshots/status-page.png)
 
 ## YAML Export / Import
 

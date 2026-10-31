@@ -12,7 +12,8 @@ function fxInject() {
 <div id="fx-settings" class="overlay" onclick="if (event.target === this) closeOverlay('fx-settings')">
   <div class="panel fx">
     <h3><span>Settings</span><button class="btn" onclick="closeOverlay('fx-settings')">Close</button></h3>
-    <h4>Notifications</h4>
+    <h4>Notifications <span class="fx-exp" title="Experimental feature">Experimental</span></h4>
+    <div class="sub fx-expnote">Experimental: may not work with every setup yet.</div>
     <div class="sub">Alerts when a service goes down or recovers, and when a scan finds new services. Secrets are stored encrypted and never shown again in full.</div>
     <div class="fx-grid">
       <label class="fx-chk"><input type="checkbox" id="nt-dc-on"> Discord webhook</label>

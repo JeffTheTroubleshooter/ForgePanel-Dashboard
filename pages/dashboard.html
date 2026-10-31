@@ -6,9 +6,9 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <title>ForgePanel</title>
-<link rel="icon" type="image/png" sizes="32x32" href="../assets/favicon-32.png?v=20261031f">
-<link rel="icon" type="image/png" sizes="192x192" href="../assets/favicon-192.png?v=20261031f">
-<link rel="apple-touch-icon" href="../assets/favicon-192.png?v=20261031f">
+<link rel="icon" type="image/png" sizes="32x32" href="../assets/favicon-32.png?v=20261031g">
+<link rel="icon" type="image/png" sizes="192x192" href="../assets/favicon-192.png?v=20261031g">
+<link rel="apple-touch-icon" href="../assets/favicon-192.png?v=20261031g">
 <style>
   :root {
     --bg: #0a0a0a;
@@ -191,6 +191,8 @@
   .widget { font-size:0.72rem; color:var(--text); background:#0f0f10; border:1px solid var(--border); border-radius:6px; padding:0.2rem 0.45rem; font-family:ui-monospace, monospace; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .widget.err { color:var(--muted); border-style:dashed; }
   .ctype { font-size:0.62rem; text-transform:uppercase; letter-spacing:0.04em; border:1px solid var(--border); border-radius:999px; padding:0 0.35rem; color:var(--muted); }
+  .fx-exp { display:inline-block; vertical-align:middle; margin-left:0.4rem; font-size:0.62rem; font-weight:700; text-transform:uppercase; letter-spacing:0.05em; color:#facc15; border:1px solid #facc15; background:rgba(250,204,21,0.12); border-radius:999px; padding:0.05rem 0.45rem; }
+  .fx-expnote { color:#facc15 !important; margin-bottom:0.2rem !important; }
   .panel.fx h4 { font-size:0.9rem; margin:1rem 0 0.3rem; color:var(--red); }
   .fx-grid { display:grid; grid-template-columns:auto 1fr; gap:0.45rem 0.7rem; align-items:center; margin:0.4rem 0; }
   .fx-row3 { display:grid; grid-template-columns:1.3fr 1fr 1.2fr; gap:0.4rem; }
@@ -243,7 +245,7 @@
   .brand-logo { width:64px; height:64px; display:block; }
   .cm-bubble { position:absolute; left:calc(100% + 12px); top:50%; transform:translateY(-50%); white-space:nowrap; background:#141414; border:1px solid #2a2a2a; border-left:2px solid #ff2a2a; color:#e5e5e5; font-size:12px; padding:5px 10px; border-radius:10px; pointer-events:none; }
 </style>
-<link rel="stylesheet" href="../css/main.css?v=20261031f">
+<link rel="stylesheet" href="../css/main.css?v=20261031g">
 </head>
 <body>
 <iframe id="bg" src="dots.html"></iframe>
@@ -252,7 +254,7 @@
   <header>
     <h1 class="sr-only">ForgePanel – Service Dashboard</h1>
     <div class="brand-wrap">
-      <button class="brand-btn" id="brand-btn" onclick="toggleCoreMap()" aria-label="ForgePanel – Service Dashboard. Toggle Core Map view" aria-pressed="false" title="ForgePanel – toggle Core Map"><img class="brand-logo" src="../assets/logo.svg?v=20261031f" alt="" width="64" height="64"></button>
+      <button class="brand-btn" id="brand-btn" onclick="toggleCoreMap()" aria-label="ForgePanel – Service Dashboard. Toggle Core Map view" aria-pressed="false" title="ForgePanel – toggle Core Map"><img class="brand-logo" src="../assets/logo.svg?v=20261031g" alt="" width="64" height="64"></button>
       <span class="cm-bubble" id="cm-bubble" aria-hidden="true">Click me</span>
     </div>
   </header>
@@ -325,11 +327,11 @@
   </div>
 </div>
 
-<script src="../js/auth.js?v=20261031f"></script>
-<script src="../js/griddrag.js?v=20261031f"></script>
-<script src="../js/coremap.js?v=20261031f"></script>
-<script src="../js/yaml.js?v=20261031f"></script>
-<script src="../js/features.js?v=20261031f"></script>
+<script src="../js/auth.js?v=20261031g"></script>
+<script src="../js/griddrag.js?v=20261031g"></script>
+<script src="../js/coremap.js?v=20261031g"></script>
+<script src="../js/yaml.js?v=20261031g"></script>
+<script src="../js/features.js?v=20261031g"></script>
 <script>
 let saved = {};
 let user = "";
