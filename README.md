@@ -24,7 +24,9 @@ Self-hosted dashboard for accessing all your local and private services from one
 ### Settings toolbar
 Check All, Export, Import, Reset and Log Out.
 
-![ForgePanel settings toolbar](screenshots/toolbar.png)
+![ForgePanel top toolbar: Add service, Add group, Server stats, Scan history, Auto-scan](screenshots/toolbar-top.png)
+
+![ForgePanel bottom toolbar: Check All, Scan Network, Import Scan, Export, Import, Reset, Log Out](screenshots/toolbar.png)
 
 ### Adding a custom service
 <img src="screenshots/custom-service.gif" alt="Adding a custom service in ForgePanel" width="400">
