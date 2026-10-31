@@ -1,126 +1,40 @@
-const dbName = "ForgePanelDB";
-const storeName = "config";
+// ForgePanel client helpers. All data lives on the server (server.py + SQLite);
+// the browser only holds an HttpOnly session cookie. No IndexedDB, no
+// sessionStorage passwords, no crypto.subtle, so plain http://<ip> works.
 
-function openDB() {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(dbName, 1);
-    req.onupgradeneeded = () => req.result.createObjectStore(storeName);
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
-
-async function idbGet(key) {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(storeName, "readonly");
-    const req = tx.objectStore(storeName).get(key);
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
-
-async function idbSet(key, value) {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(storeName, "readwrite");
-    tx.objectStore(storeName).put(value, key);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
-}
-
-async function idbDelete(key) {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(storeName, "readwrite");
-    tx.objectStore(storeName).delete(key);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
-}
-
-async function deriveKey(pw) {
-  const enc = new TextEncoder();
-  const keyMaterial = await crypto.subtle.importKey("raw", enc.encode(pw), "PBKDF2", false, ["deriveKey"]);
-  return crypto.subtle.deriveKey(
-    { name: "PBKDF2", salt: enc.encode("homelab-v2"), iterations: 100000, hash: "SHA-256" },
-    keyMaterial,
-    { name: "AES-GCM", length: 256 },
-    false,
-    ["encrypt", "decrypt"]
-  );
-}
-
-// crypto.subtle only exists on HTTPS or localhost. Over plain http://<ip>
-// it is undefined, so fall back to a pure-JS SHA-256 and unencrypted storage.
-const hasSubtle = !!(window.crypto && window.crypto.subtle);
-
-function sha256Hex(str) {
-  const K = [0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
-    0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
-    0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
-    0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
-    0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
-    0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
-    0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
-    0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2];
-  const bytes = Array.from(new TextEncoder().encode(str));
-  const bitLen = bytes.length * 8;
-  bytes.push(0x80);
-  while (bytes.length % 64 !== 56) bytes.push(0);
-  for (let i = 7; i >= 0; i--) bytes.push(Math.floor(bitLen / Math.pow(2, i * 8)) & 0xff);
-  let h = [0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19];
-  const r = (x, n) => (x >>> n) | (x << (32 - n));
-  for (let o = 0; o < bytes.length; o += 64) {
-    const w = new Array(64);
-    for (let i = 0; i < 16; i++) w[i] = (bytes[o+i*4]<<24)|(bytes[o+i*4+1]<<16)|(bytes[o+i*4+2]<<8)|bytes[o+i*4+3];
-    for (let i = 16; i < 64; i++) {
-      const s0 = r(w[i-15],7) ^ r(w[i-15],18) ^ (w[i-15] >>> 3);
-      const s1 = r(w[i-2],17) ^ r(w[i-2],19) ^ (w[i-2] >>> 10);
-      w[i] = (w[i-16] + s0 + w[i-7] + s1) | 0;
-    }
-    let [a,b,c,d,e,f,g,hh] = h;
-    for (let i = 0; i < 64; i++) {
-      const t1 = (hh + (r(e,6) ^ r(e,11) ^ r(e,25)) + ((e & f) ^ (~e & g)) + K[i] + w[i]) | 0;
-      const t2 = ((r(a,2) ^ r(a,13) ^ r(a,22)) + ((a & b) ^ (a & c) ^ (b & c))) | 0;
-      hh = g; g = f; f = e; e = (d + t1) | 0; d = c; c = b; b = a; a = (t1 + t2) | 0;
-    }
-    h = [h[0]+a,h[1]+b,h[2]+c,h[3]+d,h[4]+e,h[5]+f,h[6]+g,h[7]+hh].map(x => x | 0);
+async function api(path, method = "GET", body) {
+  const opts = { method, credentials: "same-origin", headers: {} };
+  if (body !== undefined) {
+    opts.headers["Content-Type"] = "application/json";
+    opts.body = JSON.stringify(body);
+  } else if (method !== "GET") {
+    opts.headers["Content-Type"] = "application/json";
+    opts.body = "{}";
   }
-  return h.map(x => (x >>> 0).toString(16).padStart(8, "0")).join("");
+  let res;
+  try { res = await fetch("/api/" + path, opts); }
+  catch { throw Object.assign(new Error("Cannot reach the ForgePanel server. Is server.py running?"), { status: 0 }); }
+  let data = {};
+  try { data = await res.json(); } catch { /* non-JSON */ }
+  if (!res.ok) {
+    const err = new Error(data.error || `Request failed (${res.status})`);
+    err.status = res.status;
+    err.data = data;
+    throw err;
+  }
+  return data;
 }
 
-async function encrypt(data, pw) {
-  if (!hasSubtle) return { plain: true, data };
-  const key = await deriveKey(pw);
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const enc = new TextEncoder();
-  const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, enc.encode(JSON.stringify(data)));
-  return { iv: Array.from(iv), ct: Array.from(new Uint8Array(ct)) };
+function escapeHtml(v) {
+  return String(v == null ? "" : v).replace(/[&<>"'`]/g, c => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;", "`": "&#96;"
+  })[c]);
 }
 
-async function decrypt(payload, pw) {
-  if (payload && payload.plain) return payload.data;
-  if (!hasSubtle) throw new Error("Encrypted data needs HTTPS or localhost to open");
-  const key = await deriveKey(pw);
-  const iv = new Uint8Array(payload.iv);
-  const ct = new Uint8Array(payload.ct);
-  const pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ct);
-  return JSON.parse(new TextDecoder().decode(pt));
-}
-
-async function hashPw(pw) {
-  if (!hasSubtle) return sha256Hex(pw + "homelab-salt");
-  const enc = new TextEncoder();
-  const buf = await crypto.subtle.digest("SHA-256", enc.encode(pw + "homelab-salt"));
-  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
-}
-
-async function loadAccount() {
-  try { return await idbGet("account"); } catch { return null; }
-}
-
-async function saveAccount(user, pwHash) {
-  await idbSet("account", { user, pwHash });
+// Only allow image data URLs or relative/http(s) URLs as logo sources.
+function safeImgSrc(v, fallback) {
+  const s = String(v || "");
+  if (/^data:image\/(png|jpe?g|gif|webp|svg\+xml);base64,[A-Za-z0-9+/=]+$/.test(s)) return s;
+  if (/^(\.\.\/|\/|https?:\/\/)[^"'<>\s]*$/.test(s)) return s;
+  return fallback;
 }

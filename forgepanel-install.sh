@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 #
 # ForgePanel-Dashboard installer / uninstaller
-# Detects distro, ensures python3 + git are present, clones the repo,
-# and sets up a simple service to serve it.
+# Detects distro, installs python3 (with sqlite3), git, curl and the optional
+# python3 cryptography package, clones/updates the repo, prepares database/,
+# opens the firewall port and runs server.py as a systemd/OpenRC service.
 #
 # Usage:
 #   bash forgepanel-install.sh            # install
-#   bash forgepanel-install.sh uninstall  # remove service (+ optional packages)
+#   bash forgepanel-install.sh uninstall  # remove service, optionally database/, dir, packages
 #
 
 set -euo pipefail
@@ -60,58 +61,46 @@ detect_distro() {
   info "Detected: $ID ($PKG)"
 }
 
-# ── package check + install ────────────────────────────────────────────────
-ensure_package() {
-  local cmd="$1"
-  local pkg="$2"
-
-  if command -v "$cmd" >/dev/null 2>&1; then
-    ok "$cmd already installed"
-    return 0
-  fi
-
-  info "$cmd not found — installing $pkg..."
+# ── packages ───────────────────────────────────────────────────────────────
+pkg_install() {
+  # install packages; never abort the whole installer on one failure
   case "$PKG" in
-    apt)
-      sudo apt-get update -qq
-      sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "$pkg"
-      ;;
-    dnf)
-      sudo dnf install -y "$pkg"
-      ;;
-    pacman)
-      sudo pacman -Sy --noconfirm "$pkg"
-      ;;
-    zypper)
-      sudo zypper --non-interactive install "$pkg"
-      ;;
-    apk)
-      sudo apk add --no-cache "$pkg"
-      ;;
+    apt)    sudo apt-get update -qq || true
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "$@" ;;
+    dnf)    sudo dnf install -y "$@" ;;
+    pacman) sudo pacman -Sy --needed --noconfirm "$@" ;;
+    zypper) sudo zypper --non-interactive install "$@" ;;
+    apk)    sudo apk add --no-cache "$@" ;;
   esac
-  ok "$pkg installed"
 }
 
 install_requirements() {
-  info "Checking required packages..."
-  ensure_package python3 python3
-  ensure_package git git
-}
-
-# Optional: Python "cryptography" so scan/scan.py can write encrypted results.enc
-install_scan_optional() {
-  if python3 -c "import cryptography" >/dev/null 2>&1; then
-    ok "python3 cryptography already installed (network scan encryption)"
-    return 0
-  fi
-  ask_yn "Install optional python3 cryptography package for encrypted network scan results?" || return 0
+  info "Installing required packages..."
+  # python3 incl. the sqlite3 module, git, curl
   case "$PKG" in
-    apt)    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y python3-cryptography || true ;;
-    dnf)    sudo dnf install -y python3-cryptography || true ;;
-    pacman) sudo pacman -Sy --noconfirm python-cryptography || true ;;
-    zypper) sudo zypper --non-interactive install python3-cryptography || true ;;
-    apk)    sudo apk add --no-cache py3-cryptography || true ;;
-  esac
+    apt)    pkg_install python3 git curl ca-certificates libsqlite3-0 ;;
+    dnf)    pkg_install python3 python3-libs git curl sqlite-libs ;;
+    pacman) pkg_install python git curl sqlite ;;
+    zypper) pkg_install python3 git curl libsqlite3-0 ;;
+    apk)    pkg_install python3 git curl sqlite-libs ;;
+  esac || die "Could not install required packages."
+
+  info "Installing optional python3 cryptography (encryption at rest)..."
+  case "$PKG" in
+    apt|dnf|zypper) pkg_install python3-cryptography ;;
+    pacman)         pkg_install python-cryptography ;;
+    apk)            pkg_install py3-cryptography ;;
+  esac || warn "python3 cryptography package could not be installed."
+
+  command -v python3 >/dev/null 2>&1 || die "python3 not found after install."
+  python3 -c "import sqlite3" 2>/dev/null || die "python3 cannot import sqlite3. Install your distro's python3 sqlite module and re-run."
+  ok "python3 $(python3 -c 'import sys; print(sys.version.split()[0])') with sqlite3 OK"
+  if python3 -c "import cryptography" 2>/dev/null; then
+    ok "python3 cryptography OK: dashboard data and scan results will be encrypted at rest"
+  else
+    warn "python3 cryptography is MISSING: data in database/forgepanel.db will be stored UNENCRYPTED."
+    warn "Install it later (python3-cryptography / python-cryptography / py3-cryptography) and restart the service."
+  fi
 }
 
 # ── prompts ────────────────────────────────────────────────────────────────
@@ -129,19 +118,45 @@ setup_files() {
   info "Setting up files in $INSTALL_DIR ..."
   if [[ -d "$INSTALL_DIR/.git" ]]; then
     info "Existing install found — pulling latest..."
-    sudo git -C "$INSTALL_DIR" pull --ff-only
+    sudo git -C "$INSTALL_DIR" pull --ff-only || die "git pull failed. Local edits in $INSTALL_DIR? Back up database/ and resolve, then re-run."
   else
     sudo mkdir -p "$(dirname "$INSTALL_DIR")"
     sudo git clone --depth 1 "$REPO_URL" "$INSTALL_DIR"
   fi
-  sudo chown -R "$USER:$USER" "$INSTALL_DIR" 2>/dev/null || true
-  ok "Files ready."
+  [[ -f "$INSTALL_DIR/server.py" ]] || die "server.py missing in $INSTALL_DIR."
+  sudo chown -R "$USER:$(id -gn)" "$INSTALL_DIR" 2>/dev/null || true
+
+  # database folder: only the service user may read it
+  sudo mkdir -p "$INSTALL_DIR/database"
+  sudo chown "$USER:$(id -gn)" "$INSTALL_DIR/database"
+  sudo chmod 700 "$INSTALL_DIR/database"
+  [[ -f "$INSTALL_DIR/database/forgepanel.db" ]] && sudo chmod 600 "$INSTALL_DIR/database/forgepanel.db"
+  ok "Files ready (database: $INSTALL_DIR/database, mode 0700)."
+}
+
+# ── firewall ───────────────────────────────────────────────────────────────
+open_firewall() {
+  if command -v ufw >/dev/null 2>&1 && sudo ufw status 2>/dev/null | grep -q "Status: active"; then
+    sudo ufw allow "$PORT/tcp" >/dev/null && ok "ufw: opened $PORT/tcp"
+  elif command -v firewall-cmd >/dev/null 2>&1 && sudo firewall-cmd --state >/dev/null 2>&1; then
+    sudo firewall-cmd --permanent --add-port="$PORT/tcp" >/dev/null && sudo firewall-cmd --reload >/dev/null \
+      && ok "firewalld: opened $PORT/tcp"
+  else
+    info "No active ufw/firewalld found; firewall unchanged."
+  fi
 }
 
 # ── service ────────────────────────────────────────────────────────────────
+stop_old_static_server() {
+  # installs before server.py ran "python3 -m http.server"; free the port
+  pkill -f "python3? -m http.server $PORT" 2>/dev/null || true
+  pkill -f "python3? -m http.server.*--directory $INSTALL_DIR" 2>/dev/null || true
+}
+
 create_service() {
   local python
   python=$(command -v python3)
+  stop_old_static_server
 
   if command -v systemctl >/dev/null 2>&1; then
     info "Creating systemd service..."
@@ -153,17 +168,19 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=$INSTALL_DIR
-ExecStart=$python -m http.server $PORT
+ExecStart=$python $INSTALL_DIR/server.py --port $PORT --host 0.0.0.0
 Restart=on-failure
 RestartSec=3
 User=$USER
+UMask=0077
 
 [Install]
 WantedBy=multi-user.target
 UNIT
     sudo systemctl daemon-reload
-    sudo systemctl enable --now "$SERVICE_NAME"
-    ok "systemd service enabled and started."
+    sudo systemctl enable "$SERVICE_NAME" >/dev/null 2>&1
+    sudo systemctl restart "$SERVICE_NAME"   # restart so upgrades from http.server switch over
+    ok "systemd service enabled and (re)started."
 
   elif command -v rc-service >/dev/null 2>&1; then
     info "Creating OpenRC service (Alpine)..."
@@ -171,8 +188,10 @@ UNIT
 #!/sbin/openrc-run
 description="ForgePanel Dashboard"
 command="$python"
-command_args="-m http.server $PORT"
+command_args="$INSTALL_DIR/server.py --port $PORT --host 0.0.0.0"
+command_user="$USER"
 directory="$INSTALL_DIR"
+umask=077
 command_background=true
 pidfile="/run/${SERVICE_NAME}.pid"
 OPENRC
@@ -182,8 +201,9 @@ OPENRC
     ok "OpenRC service enabled and started."
   else
     warn "No systemd or OpenRC detected. Starting in background..."
-    nohup "$python" -m http.server "$PORT" --directory "$INSTALL_DIR" >/dev/null 2>&1 &
-    ok "Started in background (PID $!)."
+    pkill -f "$INSTALL_DIR/server.py" 2>/dev/null || true
+    (cd "$INSTALL_DIR" && umask 077 && nohup "$python" server.py --port "$PORT" --host 0.0.0.0 >>"$INSTALL_DIR/database/server.log" 2>&1 &)
+    ok "Started in background (log: $INSTALL_DIR/database/server.log)."
   fi
 }
 
@@ -210,24 +230,42 @@ remove_service() {
     else
       warn "No OpenRC service found."
     fi
-  else
-    # best-effort kill of background python http.server
-    pkill -f "python3 -m http.server" 2>/dev/null || true
-    warn "No service manager found — attempted to stop background process."
   fi
+  # best-effort stop of background processes (server.py or an old http.server)
+  pkill -f "forgepanel.*/server.py|[/ ]server.py --port" 2>/dev/null || true
+  pkill -f "python3 -m http.server" 2>/dev/null || true
+}
+
+backup_database() {
+  local dir="$1" dest
+  dest="$HOME/forgepanel-database-backup-$(date +%Y%m%d-%H%M%S)"
+  sudo cp -a "$dir/database" "$dest" && sudo chown -R "$USER:$(id -gn)" "$dest" 2>/dev/null
+  ok "Database backed up to $dest"
 }
 
 remove_files() {
   local dir="${1:-$DEFAULT_DIR}"
-  if [[ -d "$dir" ]]; then
-    if ask_yn "Remove install directory $dir?"; then
-      sudo rm -rf "$dir"
-      ok "Directory removed."
-    else
-      info "Kept $dir"
-    fi
-  else
+  if [[ ! -d "$dir" ]]; then
     warn "Install directory $dir not found."
+    return
+  fi
+  local has_db=0 delete_db=0
+  [[ -f "$dir/database/forgepanel.db" ]] && has_db=1
+  if (( has_db )); then
+    if ask_yn "Delete the database ($dir/database: account, services, scan results)?"; then
+      delete_db=1
+    fi
+  fi
+  if ask_yn "Remove install directory $dir?"; then
+    (( has_db && ! delete_db )) && backup_database "$dir"
+    sudo rm -rf "$dir"
+    ok "Directory removed."
+  else
+    if (( delete_db )); then
+      sudo find "$dir/database" -mindepth 1 ! -name README.md ! -name .gitkeep -delete
+      ok "Database deleted."
+    fi
+    info "Kept $dir"
   fi
 }
 
@@ -235,21 +273,11 @@ remove_packages() {
   if ask_yn "Also remove packages (python3 and git)? (may affect other software)"; then
     info "Removing packages..."
     case "$PKG" in
-      apt)
-        sudo apt-get remove -y python3 git || true
-        ;;
-      dnf)
-        sudo dnf remove -y python3 git || true
-        ;;
-      pacman)
-        sudo pacman -Rns --noconfirm python git || true
-        ;;
-      zypper)
-        sudo zypper --non-interactive remove python3 git || true
-        ;;
-      apk)
-        sudo apk del python3 git || true
-        ;;
+      apt)    sudo apt-get remove -y python3 git || true ;;
+      dnf)    sudo dnf remove -y python3 git || true ;;
+      pacman) sudo pacman -Rns --noconfirm python git || true ;;
+      zypper) sudo zypper --non-interactive remove python3 git || true ;;
+      apk)    sudo apk del python3 git || true ;;
     esac
     ok "Package removal finished."
   else
@@ -285,10 +313,10 @@ main() {
       echo "==============================="
       detect_distro
       install_requirements
-      install_scan_optional
       ask_user
       setup_files
       create_service
+      open_firewall
 
       local ip
       ip=$(hostname -I 2>/dev/null | awk '{print $1}') || ip="localhost"
@@ -298,6 +326,7 @@ main() {
       echo
       echo "  Open:  http://${ip:-localhost}:$PORT"
       echo "  Files: $INSTALL_DIR"
+      echo "  Database: $INSTALL_DIR/database/forgepanel.db (back this folder up)"
       echo
       echo "Default login (change on first use): admin / forgepanel"
       echo

@@ -15,7 +15,9 @@ python3 scan/scan.py --subnet 192.168.1.0/24
 FORGEPANEL_PASSWORD='your-dashboard-password' python3 scan/scan.py   # non-interactive
 ```
 
-You are asked for your **dashboard login password** (via `getpass`, never as a CLI argument). Then in the dashboard click **Import Scan**: it loads `../scan/results.enc` from the server (or lets you pick the file), decrypts it with your session password, fills empty official tiles and adds the rest as custom services. Existing IP:port entries are skipped.
+Easiest: click **Scan Network** in the dashboard. `server.py` imports this script, runs it with `scan.conf`, and stores the results encrypted in `database/forgepanel.db`.
+
+From the CLI you are asked for a password (via `getpass`, never as a CLI argument; normally your dashboard password). Then click **Import Scan** in the dashboard: the server reads `scan/results.enc` (or `results.json`) from this folder, or you upload the file, and it is decrypted on the server with the password you enter. Found official services fill empty tiles, the rest become custom services, and existing IP:port entries are skipped.
 
 ## Encryption
 
@@ -23,7 +25,7 @@ Results are written to `scan/results.enc` with AES-256-GCM, key from PBKDF2-SHA2
 
 This needs the Python `cryptography` package (`apt install python3-cryptography`, `dnf install python3-cryptography`, `pacman -S python-cryptography`, `apk add py3-cryptography`). Without it, or with `--plain`, the scanner writes an **unencrypted** `scan/results.json` and prints a warning.
 
-Browsers only have WebCrypto on HTTPS or `http://localhost`. If you open the dashboard over plain `http://<ip>`, `results.enc` cannot be decrypted there; use `--plain` to produce `results.json` for that case (anyone who can reach the web server can read it, so delete it after importing).
+Decryption happens on the server, so this works over plain `http://<ip>` too. `server.py` never serves `scan/results.*` over HTTP.
 
 `results.enc` / `results.json` are in `.gitignore`. See `results.example.json` for the format (fake data). If you change your dashboard password, re-run the scan.
 

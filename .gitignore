@@ -2,3 +2,10 @@
 scan/results.enc
 scan/results.json
 __pycache__/
+*.pyc
+
+# Server database and related files - never commit
+database/*
+!database/README.md
+!database/.gitkeep
+data/

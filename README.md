@@ -6,7 +6,8 @@ Self-hosted dashboard for accessing all your local and private services from one
 
 - Service cards with online/offline status
 - Custom services (name, IP, port, icon)
-- Encrypted local storage (IndexedDB)
+- Python backend (`server.py`, standard library) with a SQLite database in `database/`
+- Data encrypted at rest (AES-256-GCM, optional `cryptography` package)
 - Export / Import / Reset
 - Forgot password and username recovery
 - Animated background
@@ -42,6 +43,8 @@ Change credentials on first login.
 ```
 ForgePanel-Dashboard/
 ├── index.html
+├── server.py            # static files + JSON API + SQLite
+├── database/            # forgepanel.db lives here (gitignored, never served)
 ├── pages/
 │   ├── login.html
 │   ├── dashboard.html
@@ -63,17 +66,35 @@ ForgePanel-Dashboard/
 
 ## Network Scan
 
-`scan/scan.py` (Python 3 standard library) scans your LAN for well-known self-hosted service ports (Jellyfin, Immich, Nextcloud, Proxmox, Portainer, Home Assistant, Plex, Grafana and more, set in `scan/scan.conf`) and identifies them from the HTTP title or Server header.
+Click **Scan Network** in the dashboard toolbar. The server runs `scan/scan.py` (Python standard library), which TCP-scans your LAN for well-known self-hosted ports (Jellyfin, Immich, Nextcloud, Proxmox, Portainer, Home Assistant, Plex, Grafana and more, set in `scan/scan.conf`) and identifies services by HTTP title or Server header. Results are stored (encrypted) in the database; found official services fill their tiles, everything else is added as a custom service, and IP:port duplicates are skipped.
+
+The CLI still works and writes `scan/results.enc` (encrypted with a password you type) for **Import Scan**:
 
 ```bash
-python3 scan/scan.py        # asks for your dashboard password
+python3 scan/scan.py
 ```
 
-Results go to `scan/results.enc`, encrypted with your dashboard password (AES-GCM, same key settings as the dashboard; needs the `python3-cryptography` package, otherwise an unencrypted `results.json` is written with a warning). In the dashboard, click **Import Scan**: found official services fill their tiles, everything else is added as a custom service, and duplicates are skipped. Encrypted results can only be opened on HTTPS or `http://localhost`; over plain HTTP use `scan.py --plain`. Details in [scan/README.md](scan/README.md).
+Details in [scan/README.md](scan/README.md).
+
+## Database and Security
+
+- `server.py` keeps everything in `database/forgepanel.db` (SQLite, file 0600, folder 0700). The server never serves `database/`, `scan/results.*`, `config/`, `.py`/`.sh`/`.conf` files or dotfiles, and has no directory listings.
+- Passwords and security answers are hashed with scrypt and a random per-user salt. Sessions are random tokens in an `HttpOnly; SameSite=Strict` cookie that expires after 12 hours. Login, export and forgot-password attempts are limited to 5 failures per 5 minutes per IP.
+- With the `cryptography` package (`python3-cryptography`) installed, dashboard settings, custom services and scan results are encrypted with AES-256-GCM. The data key is wrapped by keys derived from your password and your security answer, and is unwrapped only in server memory while you are signed in. Changing or resetting the password re-encrypts everything with a new key.
+- **Without `cryptography` the data is stored unencrypted**; the server logs a warning at startup. Passwords are still hashed.
+- The browser no longer stores anything except the session cookie, so the dashboard works over plain `http://<ip>`. Traffic itself is not encrypted on plain HTTP; put ForgePanel behind a reverse proxy with HTTPS (e.g. Nginx Proxy Manager) if you reach it over untrusted networks.
+
+### Backup
+
+Back up the `database/` folder (stop the service first), or use **Export** in the dashboard for a password-encrypted `forgepanel.conf`. See [database/README.md](database/README.md) for backup and restore steps.
+
+### Upgrading from the IndexedDB version
+
+Older versions kept data in the browser. Before upgrading, open the old dashboard and click **Export**; after upgrading, sign in (default `admin` / `forgepanel`, then set new credentials) and **Import** that file with the old password. Re-running the installer switches the service from `python3 -m http.server` to `server.py` automatically.
 
 ## Automatic Install (with service)
 
-`forgepanel-install.sh` installs ForgePanel and sets it up as a service that starts on boot. It works on Debian/Ubuntu, Fedora/RHEL, Arch, openSUSE and Alpine. It installs python3 and git if needed, clones the repo (default `/opt/forgepanel`), asks which port to use (default `8084`), and creates a `forgepanel` systemd service (OpenRC on Alpine).
+`forgepanel-install.sh` installs ForgePanel and sets it up as a service that starts on boot. It works on Debian/Ubuntu, Fedora/RHEL, Arch, openSUSE and Alpine. It installs python3 (with sqlite3), git, curl and python3-cryptography, checks that `import sqlite3` / `import cryptography` work, clones or updates the repo (default `/opt/forgepanel`), creates `database/` (0700), asks which port to use (default `8084`), opens that port in ufw/firewalld if active, and creates a `forgepanel` systemd service (OpenRC on Alpine) running `python3 server.py --port <port> --host 0.0.0.0`. Running it again on an existing install pulls the latest code and restarts the service.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/JeffTheTroubleshooter/ForgePanel-Dashboard/main/forgepanel-install.sh -o forgepanel-install.sh
@@ -96,18 +117,17 @@ Run the same script with `uninstall`:
 bash forgepanel-install.sh uninstall
 ```
 
-It stops and removes the `forgepanel` service (systemd, or OpenRC on Alpine), asks which install directory to delete (default `/opt/forgepanel`), and then asks whether to remove python3 and git too. Say no to that last question if other software on the machine uses them.
+It stops and removes the `forgepanel` service (systemd, or OpenRC on Alpine), asks whether to delete the database (`database/`), asks which install directory to delete (default `/opt/forgepanel`; if you keep the database it is first copied to `~/forgepanel-database-backup-<date>`), and then asks whether to remove python3 and git too. Say no to that last question if other software on the machine uses them.
 
 ## Manual Run
 
-Serve the folder with any web server and open `index.html`.
-
 ```bash
 cd ForgePanel-Dashboard
-python3 -m http.server 8084
+python3 server.py                 # http://localhost:8084, database in database/
+python3 server.py --port 8084 --host 0.0.0.0 --db database/forgepanel.db
 ```
 
-Then open `http://localhost:8084`.
+Then open `http://localhost:8084` (or `http://<server-ip>:8084`). A plain static server (`python3 -m http.server`) no longer works, because the dashboard needs the API.
 
 ## License
 

@@ -148,54 +148,31 @@
 
 <script src="../js/auth.js"></script>
 <script>
+let loginPw = "";  // kept only in memory for the change-credentials step
 function showScreen(id) {
   document.querySelectorAll(".screen").forEach(s => s.classList.remove("active"));
   document.getElementById(id).classList.add("active");
 }
-
 async function init() {
-  let acc = await loadAccount();
-  const expectedHash = await hashPw("forgepanel");
-  if (!acc || (acc.user === "admin" && acc.pwHash !== expectedHash && await idbGet("mustChange"))) {
-    await idbSet("account", null);
-    const pwHash = await hashPw("forgepanel");
-    await saveAccount("admin", pwHash);
-    await idbSet("mustChange", true);
-    acc = await loadAccount();
-  }
-  if (!acc) {
-    const pwHash = await hashPw("forgepanel");
-    await saveAccount("admin", pwHash);
-    await idbSet("mustChange", true);
-  }
-  document.getElementById("user").value = "admin";
+  try {
+    const st = await api("status");
+    if (st.authenticated && !st.mustChange) { location.href = "dashboard.html"; return; }
+    if (!st.encryption) console.warn("ForgePanel server: data is stored unencrypted (python3-cryptography missing)");
+  } catch (e) { document.getElementById("login-error").textContent = e.message; }
+  if (!document.getElementById("user").value) document.getElementById("user").value = "admin";
 }
 init();
-
 async function auth() {
   const user = document.getElementById("user").value.trim();
   const pw = document.getElementById("pw").value;
   const err = document.getElementById("login-error");
   if (!user || !pw) { err.textContent = "Enter username and password"; return; }
-  let acc, pwHash;
   try {
-    acc = await loadAccount();
-    pwHash = await hashPw(pw);
-  } catch (e) {
-    err.textContent = "Sign-in error: " + (e && e.message ? e.message : e);
-    return;
-  }
-  if (!acc || acc.user !== user || acc.pwHash !== pwHash) {
-    err.textContent = "Invalid username or password";
-    return;
-  }
-  sessionStorage.setItem("forgepanel-user", user);
-  sessionStorage.setItem("forgepanel-pw", pw);
-  const mustChange = await idbGet("mustChange");
-  if (mustChange) showScreen("change-pw");
-  else location.href = "dashboard.html";
+    const r = await api("login", "POST", { user, pw });
+    if (r.mustChange) { loginPw = pw; showScreen("change-pw"); }
+    else location.href = "dashboard.html";
+  } catch (e) { err.textContent = e.message; }
 }
-
 async function saveNewCredentials() {
   const nu = document.getElementById("new-user").value.trim();
   const np = document.getElementById("new-pw").value;
@@ -205,25 +182,25 @@ async function saveNewCredentials() {
   const err = document.getElementById("change-error");
   if (!nu || !np) { err.textContent = "Enter username and password"; return; }
   if (np !== np2) { err.textContent = "Passwords do not match"; return; }
-  if (np === "forgepanel" && nu === "admin") { err.textContent = "Choose a different password"; return; }
+  if (np.length < 6) { err.textContent = "Use at least 6 characters"; return; }
+  if (np === "forgepanel") { err.textContent = "Choose a different password"; return; }
   if (!q || !a) { err.textContent = "Set a security question and answer"; return; }
-  const pwHash = await hashPw(np);
-  await saveAccount(nu, pwHash);
-  const aHash = await hashPw(a.toLowerCase());
-  await idbSet("security", { q, aHash });
-  await idbDelete("mustChange");
-  sessionStorage.setItem("forgepanel-user", nu);
-  sessionStorage.setItem("forgepanel-pw", np);
-  location.href = "dashboard.html";
+  try {
+    await api("credentials", "POST", { currentPw: loginPw, newUser: nu, newPw: np, secQ: q, secA: a });
+    loginPw = "";
+    location.href = "dashboard.html";
+  } catch (e) { err.textContent = e.message; }
 }
-
-async function showForgot() {
-  const sec = await idbGet("security");
-  if (!sec) { document.getElementById("login-error").textContent = "No security question set"; return; }
-  document.getElementById("forgot-q").textContent = sec.q || "Answer your security question";
-  showScreen("forgot");
+async function loadQuestion(targetId, screen) {
+  try {
+    const r = await api("security-question");
+    if (!r.question) { document.getElementById("login-error").textContent = "No security question set"; return; }
+    document.getElementById(targetId).textContent = r.question;
+    showScreen(screen);
+  } catch (e) { document.getElementById("login-error").textContent = e.message; }
 }
-
+function showForgot() { loadQuestion("forgot-q", "forgot"); }
+function showForgotUser() { loadQuestion("forgot-user-q", "forgot-user"); }
 async function resetWithSecurity() {
   const ans = document.getElementById("forgot-a").value.trim();
   const np = document.getElementById("forgot-np").value;
@@ -232,40 +209,24 @@ async function resetWithSecurity() {
   if (!ans || !np) { err.textContent = "Fill all fields"; return; }
   if (np !== np2) { err.textContent = "Passwords do not match"; return; }
   try {
-    const sec = await idbGet("security");
-    const aHash = await hashPw(ans.toLowerCase());
-    if (aHash !== sec.aHash) { err.textContent = "Incorrect answer"; return; }
-    const acc = await loadAccount();
-    const pwHash = await hashPw(np);
-    await saveAccount(acc.user, pwHash);
+    const r = await api("forgot-password", "POST", { answer: ans, newPw: np });
     showScreen("login");
-    document.getElementById("login-error").textContent = "Password updated. Sign in.";
-  } catch { err.textContent = "Reset failed"; }
+    document.getElementById("login-error").textContent = r.dataCleared
+      ? "Password updated, but saved services could not be recovered. Sign in." : "Password updated. Sign in.";
+  } catch (e) { err.textContent = e.message; }
 }
-
-async function showForgotUser() {
-  const sec = await idbGet("security");
-  if (!sec) { document.getElementById("login-error").textContent = "No security question set"; return; }
-  document.getElementById("forgot-user-q").textContent = sec.q || "Answer your security question";
-  showScreen("forgot-user");
-}
-
 async function resetUsername() {
   const ans = document.getElementById("forgot-user-a").value.trim();
   const newUser = document.getElementById("forgot-user-new").value.trim();
   const err = document.getElementById("forgot-user-error");
   if (!ans || !newUser) { err.textContent = "Fill all fields"; return; }
   try {
-    const sec = await idbGet("security");
-    const aHash = await hashPw(ans.toLowerCase());
-    if (aHash !== sec.aHash) { err.textContent = "Incorrect answer"; return; }
-    const acc = await loadAccount();
-    await saveAccount(newUser, acc.pwHash);
+    await api("forgot-username", "POST", { answer: ans, newUser });
     showScreen("login");
+    document.getElementById("user").value = newUser;
     document.getElementById("login-error").textContent = "Username updated. Sign in.";
-  } catch { err.textContent = "Reset failed"; }
+  } catch (e) { err.textContent = e.message; }
 }
-
 document.getElementById("pw").addEventListener("keydown", e => { if (e.key === "Enter") auth(); });
 document.getElementById("user").addEventListener("keydown", e => { if (e.key === "Enter") auth(); });
 </script>

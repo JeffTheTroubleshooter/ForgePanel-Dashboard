@@ -131,6 +131,11 @@
   }
   #modal button.danger { border-color: var(--red); color: var(--red); }
   #modal button.primary { background: var(--red); color: #000; border: none; font-weight: 600; }
+  #modal input {
+    width: 100%; margin-bottom: 1rem; background: #0e0e0e; border: 1px solid var(--border);
+    color: var(--text); border-radius: 6px; padding: 0.5rem; font-size: 0.85rem; display: none;
+  }
+  #scan-status { text-align:center; color: var(--muted); font-size: 0.8rem; min-height: 1.1em; margin-bottom: 0.8rem; }
 </style>
 <link rel="stylesheet" href="../css/main.css">
 </head>
@@ -145,16 +150,18 @@
   <div style="text-align:center; margin-bottom:1rem;">
     <button onclick="addCustom()" style="background:transparent; border:1px solid var(--border); color:var(--text); border-radius:8px; padding:0.45rem 1rem; cursor:pointer; font-size:0.8rem; font-family:inherit;">Add service</button>
   </div>
+  <div id="scan-status"></div>
   <div class="grid" id="grid"></div>
 </div>
 
 <div id="settings">
   <button onclick="checkAll()" title="Check the status of all services">Check All</button>
+  <button onclick="scanNetwork()" title="Scan the local network for services and add them">Scan Network</button>
+  <button onclick="importScan()" title="Import results from scan/scan.py (server folder or a file)">Import Scan</button>
+  <input type="file" id="scan-file" accept=".enc,.json" onchange="importScanFile(this)">
   <button onclick="exportConfig()" title="Download an encrypted backup of your settings">Export</button>
   <button onclick="document.getElementById('import-file').click()" title="Restore settings from a backup file">Import</button>
-  <input type="file" id="import-file" accept=".json" onchange="importConfig(this)">
-  <button onclick="importScan()" title="Add services found by scan/scan.py (loads ../scan/results.enc)">Import Scan</button>
-  <input type="file" id="scan-file" accept=".enc,.json" onchange="importScanFile(this)">
+  <input type="file" id="import-file" accept=".json,.conf" onchange="importConfig(this)">
   <button class="danger" onclick="resetAll()" title="Clear all saved IPs, ports, and custom services">Reset</button>
   <button onclick="logout()">Log Out</button>
 </div>
@@ -163,6 +170,7 @@
   <div class="box">
     <h3 id="modal-title">Confirm</h3>
     <p id="modal-msg"></p>
+    <input id="modal-input" type="password" autocomplete="current-password">
     <div class="btns">
       <button id="modal-cancel">Cancel</button>
       <button id="modal-ok" class="primary">OK</button>
@@ -172,11 +180,8 @@
 
 <script src="../js/auth.js"></script>
 <script>
-const user = sessionStorage.getItem("forgepanel-user");
-const password = sessionStorage.getItem("forgepanel-pw");
-if (!user || !password) location.href = "login.html";
-
 let saved = {};
+let user = "";
 
 const services = [
   { name: "Jellyfin", desc: "Stream movies, TV, and music from your own server", port: 8096, logo: "../assets/icons/jellyfin.png" },
@@ -194,36 +199,48 @@ const services = [
 ];
 
 let modalResolve = null;
-function showModal(title, msg, okText, danger) {
+function showModal(title, msg, okText, danger, askPassword) {
   return new Promise(resolve => {
     document.getElementById("modal-title").textContent = title;
     document.getElementById("modal-msg").textContent = msg;
+    const inp = document.getElementById("modal-input");
+    inp.value = "";
+    inp.style.display = askPassword ? "block" : "none";
+    inp.placeholder = askPassword || "";
     const okBtn = document.getElementById("modal-ok");
     okBtn.textContent = okText || "OK";
     okBtn.className = danger ? "danger" : "primary";
     document.getElementById("modal").classList.add("show");
+    if (askPassword) setTimeout(() => inp.focus(), 0);
     modalResolve = resolve;
   });
 }
-function closeModal(result) {
+function closeModal(ok) {
   document.getElementById("modal").classList.remove("show");
-  if (modalResolve) modalResolve(result);
+  const inp = document.getElementById("modal-input");
+  const val = inp.style.display === "block" ? (ok ? inp.value : null) : ok;
+  inp.value = "";
+  if (modalResolve) modalResolve(val);
   modalResolve = null;
 }
 document.getElementById("modal-ok").onclick = () => closeModal(true);
 document.getElementById("modal-cancel").onclick = () => closeModal(false);
+document.getElementById("modal-input").addEventListener("keydown", e => { if (e.key === "Enter") closeModal(true); });
+const askPassword = (title, msg) => showModal(title, msg, "OK", false, "Password");
+
+function handleAuthError(e) {
+  if (e && (e.status === 401 || (e.status === 403 && e.data && e.data.mustChange))) { location.href = "login.html"; return true; }
+  return false;
+}
 
 async function loadData() {
-  try {
-    const payload = await idbGet("data");
-    if (!payload) return {};
-    return await decrypt(payload, password);
-  } catch { return {}; }
+  const r = await api("data");
+  return r.saved || {};
 }
 
 async function persist() {
-  const payload = await encrypt(saved, password);
-  await idbSet("data", payload);
+  try { await api("data", "PUT", { saved }); }
+  catch (e) { if (!handleAuthError(e)) await showModal("Save Failed", e.message, "OK"); }
 }
 
 function getAllServices() {
@@ -247,34 +264,41 @@ function getConfig(name) {
   return c || { ip: "", port: 80, logo: null };
 }
 
-function urlFor(name) {
-  const c = getConfig(name);
+function cfgFor(s) {
+  return s.custom ? ((saved._custom || [])[s.customIndex] || {}) : getConfig(s.name);
+}
+
+function urlFor(s) {
+  const c = cfgFor(s);
   if (!c.ip) return "";
-  const proto = c.scheme || ((c.port === 443) ? "https" : "http");
-  const port = ((proto === "http" && c.port === 80) || (proto === "https" && c.port === 443)) ? "" : `:${c.port}`;
-  return `${proto}://${c.ip}${port}`;
+  const p = parseInt(c.port) || 80;
+  const proto = c.scheme === "https" || c.scheme === "http" ? c.scheme : (p === 443 ? "https" : "http");
+  const port = ((proto === "http" && p === 80) || (proto === "https" && p === 443)) ? "" : `:${p}`;
+  const host = String(c.ip).replace(/[^A-Za-z0-9.\-:\[\]]/g, "");
+  return `${proto}://${host}${port}`;
 }
 
 function render() {
   const all = getAllServices();
   const grid = document.getElementById("grid");
   grid.innerHTML = all.map((s, i) => {
-    const c = getConfig(s.name);
-    const logoSrc = c.logo || s.logo;
+    const c = cfgFor(s);
+    const logoSrc = safeImgSrc(c.logo || s.logo, "../assets/icons/npm.png");
+    const name = escapeHtml(s.name);
     return `
       <div class="card" style="animation-delay:${i * 35}ms">
         <div class="card-header">
           <div class="icon" onclick="document.getElementById('file-${i}').click()" title="Change logo">
-            <img src="${logoSrc}" alt="${s.name}" id="img-${i}">
+            <img src="${escapeHtml(logoSrc)}" alt="${name}" id="img-${i}">
           </div>
           <div class="status" id="status-${i}"></div>
           <input type="file" id="file-${i}" accept="image/*" onchange="changeLogo(${i}, this)">
         </div>
-        <div class="name">${s.custom ? `<input id="name-${i}" value="${s.name}" placeholder="Service name" style="background:transparent; border:none; color:inherit; font-weight:600; font-size:1rem; width:100%;">` : s.name}</div>
-        <div class="desc">${s.desc}</div>
+        <div class="name">${s.custom ? `<input id="name-${i}" value="${name}" placeholder="Service name" style="background:transparent; border:none; color:inherit; font-weight:600; font-size:1rem; width:100%;">` : name}</div>
+        <div class="desc">${escapeHtml(s.desc)}</div>
         <div class="fields">
-          <input id="ip-${i}" placeholder="IP or hostname" value="${c.ip || ""}">
-          <input id="port-${i}" placeholder="Port" value="${c.port || s.port}">
+          <input id="ip-${i}" placeholder="IP or hostname" value="${escapeHtml(c.ip || "")}">
+          <input id="port-${i}" placeholder="Port" value="${escapeHtml(c.port || s.port)}">
         </div>
         <div class="actions">
           <button class="btn" onclick="saveAndCheck(${i})">Save & Check</button>
@@ -291,8 +315,7 @@ async function changeLogo(i, input) {
   if (!file) return;
   const reader = new FileReader();
   reader.onload = async () => {
-    const all = getAllServices();
-    const s = all[i];
+    const s = getAllServices()[i];
     if (s.custom) {
       const customs = saved._custom || [];
       const c = customs[s.customIndex] || {};
@@ -304,69 +327,54 @@ async function changeLogo(i, input) {
       c.logo = reader.result;
       saved[s.name] = c;
     }
-    document.getElementById(`img-${i}`).src = reader.result;
+    document.getElementById(`img-${i}`).src = safeImgSrc(reader.result, "../assets/icons/npm.png");
     await persist();
   };
   reader.readAsDataURL(file);
 }
 
-async function saveAndCheck(i) {
-  const all = getAllServices();
-  const s = all[i];
+function readCard(i) {
+  const s = getAllServices()[i];
   const ip = document.getElementById(`ip-${i}`).value.trim();
-  const port = document.getElementById(`port-${i}`).value.trim();
-  const nameInput = document.getElementById(`name-${i}`);
+  const port = parseInt(document.getElementById(`port-${i}`).value.trim()) || 80;
   if (s.custom) {
     const customs = saved._custom || [];
     const c = customs[s.customIndex] || {};
-    c.ip = ip;
-    c.port = parseInt(port) || 80;
-    if (nameInput) c.name = nameInput.value.trim();
-    customs[s.customIndex] = c;
-    saved._custom = customs;
-  } else {
-    const c = getConfig(s.name);
-    c.ip = ip;
-    c.port = parseInt(port) || 80;
-    saved[s.name] = c;
-  }
-  await persist();
-  checkStatus(i);
-}
-
-function openService(i) {
-  const all = getAllServices();
-  const s = all[i];
-  const ip = document.getElementById(`ip-${i}`).value.trim();
-  const port = document.getElementById(`port-${i}`).value.trim();
-  if (s.custom) {
-    const customs = saved._custom || [];
-    const c = customs[s.customIndex] || {};
-    c.ip = ip;
-    c.port = parseInt(port) || 80;
+    if (c.port !== port) delete c.scheme;
+    c.ip = ip; c.port = port;
     const nameInput = document.getElementById(`name-${i}`);
     if (nameInput) c.name = nameInput.value.trim();
     customs[s.customIndex] = c;
     saved._custom = customs;
   } else {
     const c = getConfig(s.name);
-    c.ip = ip;
-    c.port = parseInt(port) || 80;
+    if (c.port !== port) delete c.scheme;
+    c.ip = ip; c.port = port;
     saved[s.name] = c;
   }
+  return s;
+}
+
+async function saveAndCheck(i) {
+  readCard(i);
+  await persist();
+  checkStatus(i);
+}
+
+function openService(i) {
+  const s = readCard(i);
   persist();
-  const url = urlFor(s.name);
-  if (url) window.open(url, "_blank");
+  const url = urlFor(s);
+  if (url) window.open(url, "_blank", "noopener");
 }
 
 async function checkStatus(i) {
-  const all = getAllServices();
-  const s = all[i];
+  const s = getAllServices()[i];
   const el = document.getElementById(`status-${i}`);
-  if (!el) return;
-  const url = urlFor(s.name);
-  if (!url) { el.className = "status"; return; }
+  if (!el || !s) return;
+  const url = urlFor(s);
   el.className = "status";
+  if (!url) return;
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 3000);
@@ -394,83 +402,103 @@ async function deleteCustom(index) {
   saved._custom = customs;
   await persist();
   render();
+  checkAll();
 }
 
 async function exportConfig() {
-  const payload = await encrypt(saved, password);
-  const blob = new Blob([JSON.stringify({ account: user, data: payload })], { type: "application/json" });
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = "forgepanel.conf";
-  a.click();
+  const pw = await askPassword("Export", "Enter your password. The backup is encrypted with it.");
+  if (!pw) return;
+  try {
+    const r = await api("export", "POST", { password: pw });
+    const blob = new Blob([JSON.stringify(r)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "forgepanel.conf";
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  } catch (e) { if (!handleAuthError(e)) await showModal("Export Failed", e.message, "OK"); }
 }
 
 async function importConfig(input) {
   const file = input.files[0];
-  if (!file) return;
-  const text = await file.text();
-  try {
-    const obj = JSON.parse(text);
-    if (obj.data) {
-      saved = await decrypt(obj.data, password);
-      await persist();
-      render();
-      checkAll();
-    }
-  } catch {
-    await showModal("Import Failed", "Wrong password or corrupted file.", "OK");
-  }
   input.value = "";
+  if (!file) return;
+  let obj;
+  try { obj = JSON.parse(await file.text()); }
+  catch { await showModal("Import Failed", "That file is not a ForgePanel backup.", "OK"); return; }
+  let pw = "";
+  if (!(obj.data && obj.data.plain)) {
+    pw = await askPassword("Import", "Enter the password the backup was exported with.");
+    if (pw === null) return;
+  }
+  try {
+    await api("import", "POST", { file: obj, password: pw });
+    saved = await loadData();
+    render();
+    checkAll();
+  } catch (e) { if (!handleAuthError(e)) await showModal("Import Failed", e.message, "OK"); }
 }
 
-// ── Network scan import (results from scan/scan.py) ──
-async function fetchScanFile(name) {
+// ── Network scan ──
+function setScanStatus(t) { document.getElementById("scan-status").textContent = t; }
+
+async function scanNetwork() {
+  if (!await showModal("Scan Network", "Scan the local network for self-hosted services now? This uses scan/scan.conf on the server and can take up to a minute.", "Scan")) return;
   try {
-    const r = await fetch(`../scan/${name}`, { cache: "no-store" });
-    if (!r.ok) return null;
-    return await r.json();
-  } catch { return null; }
+    await api("scan", "POST", {});
+  } catch (e) {
+    if (handleAuthError(e)) return;
+    if (e.status !== 409) { await showModal("Scan Failed", e.message, "OK"); return; }
+  }
+  setScanStatus("Scanning network...");
+  const t0 = Date.now();
+  for (;;) {
+    await new Promise(r => setTimeout(r, 2000));
+    let st;
+    try { st = await api("scan"); } catch (e) { if (!handleAuthError(e)) setScanStatus(e.message); return; }
+    if (st.running) { setScanStatus(`Scanning network... ${Math.round((Date.now() - t0) / 1000)}s`); continue; }
+    setScanStatus("");
+    if (st.error) { await showModal("Scan Failed", st.error, "OK"); return; }
+    if (st.latest) await applyScan(st.latest.result);
+    return;
+  }
 }
 
 async function importScan() {
-  let payload = null;
-  if (hasSubtle) payload = await fetchScanFile("results.enc");
-  if (!payload) payload = await fetchScanFile("results.json");
-  if (!payload) {
-    if (!hasSubtle && await fetchScanFile("results.enc")) {
-      await showModal("Encrypted Scan", "scan/results.enc was found, but encrypted files can only be opened over HTTPS or http://localhost (this browser has no crypto.subtle on plain HTTP). Open the dashboard via localhost/HTTPS, or run scan.py with --plain to make results.json.", "OK");
-      return;
-    }
-    if (await showModal("No Scan Found", "No scan/results.enc or scan/results.json was found on the server. Run scan/scan.py first, or pick a results file from your computer.", "Choose File"))
-      document.getElementById("scan-file").click();
-    return;
-  }
-  await applyScan(payload);
+  const choice = await showModal("Import Scan", "Import scan/results.enc or results.json from the server folder? Cancel to pick a file instead.", "From server");
+  if (!choice) { document.getElementById("scan-file").click(); return; }
+  await sendScanImport({ fromServer: true });
 }
 
 async function importScanFile(input) {
   const file = input.files[0];
   input.value = "";
   if (!file) return;
-  try { await applyScan(JSON.parse(await file.text())); }
-  catch { await showModal("Import Scan Failed", "That file is not valid scan JSON.", "OK"); }
+  let payload;
+  try { payload = JSON.parse(await file.text()); }
+  catch { await showModal("Import Scan Failed", "That file is not valid scan JSON.", "OK"); return; }
+  await sendScanImport({ payload });
 }
 
-// Scan data comes from other devices on the network (HTTP titles), and render()
-// builds HTML from these strings, so strip markup characters.
+async function sendScanImport(body, pw) {
+  try {
+    const r = await api("scan/import", "POST", Object.assign({ password: pw || "" }, body));
+    await applyScan(r.latest.result);
+  } catch (e) {
+    if (handleAuthError(e)) return;
+    if (e.status === 400 && pw === undefined && /decrypt/i.test(e.message)) {
+      const p = await askPassword("Encrypted Scan", "Enter the password the scan was encrypted with (normally your dashboard password).");
+      if (p) return sendScanImport(body, p);
+      return;
+    }
+    await showModal("Import Scan Failed", e.message, "OK");
+  }
+}
+
+// Scan data comes from other devices on the network (HTTP titles); render() escapes, but keep it tidy.
 const scanText = (v, max) => String(v || "").replace(/[<>"'`&]/g, "").slice(0, max);
 
-async function applyScan(payload) {
-  if (!payload.plain && !hasSubtle) {
-    await showModal("Encrypted Scan", "Encrypted scan results need HTTPS or http://localhost to open. Over plain HTTP use a results.json made with scan.py --plain.", "OK");
-    return;
-  }
-  let data;
-  try { data = await decrypt(payload, password); }
-  catch {
-    await showModal("Import Scan Failed", "Could not decrypt the scan. It must be encrypted with your current dashboard password.", "OK");
-    return;
-  }
+async function applyScan(data) {
   const found = (data && Array.isArray(data.services)) ? data.services : [];
   const officialNames = services.map(s => s.name);
   saved._custom = saved._custom || [];
@@ -480,15 +508,13 @@ async function applyScan(payload) {
   let addedOfficial = 0, addedCustom = 0, skipped = 0;
   for (const f of found) {
     const ip = scanText(f.ip, 253).trim(), port = parseInt(f.port);
-    if (!/^[A-Za-z0-9.:\-\[\]]+$/.test(ip) || port < 1 || port > 65535) continue;
-    if (!ip || !port) continue;
+    if (!ip || !/^[A-Za-z0-9.:\-\[\]]+$/.test(ip) || !(port >= 1 && port <= 65535)) continue;
     const key = `${ip}:${port}`;
     if (taken.has(key)) { skipped++; continue; }
     const scheme = f.scheme === "https" ? "https" : "http";
     const off = officialNames.find(n => n === f.match);
     if (off && !(saved[off] && saved[off].ip)) {
-      const c = getConfig(off);
-      saved[off] = { ...c, ip, port, scheme };
+      saved[off] = { ...getConfig(off), ip, port, scheme };
       addedOfficial++;
     } else {
       const name = off ? `${off} (${ip})` : scanText(f.name || `Service :${port}`, 60);
@@ -511,14 +537,21 @@ async function resetAll() {
   render();
 }
 
-function logout() {
-  sessionStorage.removeItem("forgepanel-user");
-  sessionStorage.removeItem("forgepanel-pw");
+async function logout() {
+  try { await api("logout", "POST"); } catch { /* ignore */ }
   location.href = "login.html";
 }
 
 (async () => {
-  saved = await loadData();
+  try {
+    const st = await api("status");
+    if (!st.authenticated || st.mustChange) { location.href = "login.html"; return; }
+    user = st.user;
+    saved = await loadData();
+  } catch (e) {
+    if (handleAuthError(e)) return;
+    await showModal("Server Error", e.message, "OK");
+  }
   render();
   checkAll();
   setInterval(checkAll, 30000);
