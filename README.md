@@ -42,8 +42,6 @@ Hover a tile to see its name, URL and status. Click it to open the service. Whil
 ### Settings toolbar
 Check All, Export, Import, Reset and Log Out.
 
-![ForgePanel top toolbar: Add service, Add group, Server stats, Scan history, Auto-scan](screenshots/toolbar-top.png)
-
 ![ForgePanel bottom toolbar: Check All, Scan Network, Import Scan, Export, Import, Reset, Log Out](screenshots/toolbar.png)
 
 ### Adding a custom service
