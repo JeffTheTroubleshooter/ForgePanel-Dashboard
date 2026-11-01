@@ -13,6 +13,8 @@ log = None
 PUSH_PREFIX = "/api/push/"
 PREV = {}           # svc id -> last up/down state (for down/recovered alerts)
 WCACHE = {}         # svc id -> (ts, result)
+PUB_CACHE = {"sig": None, "ts": 0, "data": None}   # short-lived /api/public/status payload
+PUB_TTL = 5
 HOST_RE = re.compile(r"[A-Za-z0-9.:\-\[\]]+")
 DOCKER_SOCK = os.environ.get("FORGEPANEL_DOCKER_SOCK", "/var/run/docker.sock")
 
@@ -28,6 +30,8 @@ def migrate():
         cols = {r[1] for r in st.db.execute("PRAGMA table_info(push_state)")}
         if "last" not in cols:   # guarded additive column
             st.db.execute("ALTER TABLE push_state ADD COLUMN last INTEGER")
+        if "ping" not in cols:   # response time reported by ?ping=ms
+            st.db.execute("ALTER TABLE push_state ADD COLUMN ping REAL")
         try:
             st.db.commit()
         except Exception:
@@ -176,15 +180,16 @@ def push_interval(c):
         return 60
 
 def check_push(c, sid):
-    rows = S.STATE.store.q("SELECT last FROM push_state WHERE svc=?", (sid,))
+    rows = S.STATE.store.q("SELECT last, ping FROM push_state WHERE svc=?", (sid,))
     last = rows[0][0] if rows else None
+    ping = rows[0][1] if rows else None
     if not rows:
         return {"online": False, "detail": "no push URL"}
     if not last:
         return {"online": False, "detail": "waiting for first push"}
     age = int(time.time()) - int(last)
     ok = age <= push_interval(c) + 5
-    return {"online": ok, "detail": f"last push {age}s ago", "last": int(last)}
+    return {"online": ok, "detail": f"last push {age}s ago", "last": int(last), "ms": ping}
 
 def run_check(c, sid):
     """Run the service's configured check. Returns dict with online, ms."""
@@ -192,7 +197,8 @@ def run_check(c, sid):
     t0 = time.monotonic()
     if t == "push":
         r = check_push(c, sid)
-        r["ms"] = None
+        r.setdefault("ms", None)
+        r["type"] = t
         return r
     if t == "tcp":
         r = check_tcp(c)
@@ -454,11 +460,16 @@ def handle_push(h):
         return h.send_json(404, {"ok": False})
     qs = urllib.parse.parse_qs(urllib.parse.urlsplit(h.path).query)
     status = (qs.get("status") or ["up"])[0].lower()
+    ping = None
+    try:
+        ping = max(0.0, min(float((qs.get("ping") or [""])[0]), 3600000.0))
+    except (TypeError, ValueError):
+        pass
     now = int(time.time())
     if status == "down":
-        S.STATE.store.q("UPDATE push_state SET last=0 WHERE svc=?", (rows[0][0],))
+        S.STATE.store.q("UPDATE push_state SET last=0, ping=NULL WHERE svc=?", (rows[0][0],))
     else:
-        S.STATE.store.q("UPDATE push_state SET last=? WHERE svc=?", (now, rows[0][0]))
+        S.STATE.store.q("UPDATE push_state SET last=?, ping=? WHERE svc=?", (now, ping, rows[0][0]))
     n = int(h.headers.get("Content-Length") or 0)
     if 0 < n <= 65536:
         h.rfile.read(n)
@@ -698,6 +709,10 @@ def r_public_status(h, d):
     k = dek()
     if k is None:
         return h.send_json(503, {"error": "Status is unavailable until an admin signs in after a server restart.", "title": c["title"]})
+    now = int(time.time())
+    sig = hashlib.sha256(k + json.dumps(c, sort_keys=True).encode()).hexdigest()
+    if PUB_CACHE["sig"] == sig and now - PUB_CACHE["ts"] < PUB_TTL:
+        return h.send_json(200, PUB_CACHE["data"])
     saved = S.STATE.store.load_saved(k)
     L = saved.get("_layout") if isinstance(saved.get("_layout"), dict) else {}
     gname = {}
@@ -726,8 +741,10 @@ def r_public_status(h, d):
             x["addr"] = f"{cfg.get('ip')}:{cfg.get('port')}"
         out.append(x)
     order = [g.get("name") for g in L.get("groups") or []]
-    h.send_json(200, {"title": c["title"], "showMap": c["showMap"], "generated": now, "interval": S.UPTIME["interval"],
-                      "groups": [str(g)[:60] for g in order if g], "services": out})
+    payload = {"title": c["title"], "showMap": c["showMap"], "generated": now, "interval": S.UPTIME["interval"],
+               "groups": [str(g)[:60] for g in order if g], "services": out}
+    PUB_CACHE.update(sig=sig, ts=now, data=payload)
+    h.send_json(200, payload)
 
 ROUTES = {
     ("GET", "/api/notify"): r_notify_get,

@@ -14,11 +14,13 @@ import hashlib
 import hmac
 import http.server
 import importlib.util
+import ipaddress
 import json
 import logging
 import os
 import posixpath
 import shutil
+import signal
 import subprocess
 import re
 import socket
@@ -38,6 +40,8 @@ except ImportError:  # optional
     HAVE_CRYPTO = False
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
+VERSION = "1.1.0"
+STARTED = time.time()
 DEFAULT_DB = os.path.join(ROOT, "database", "forgepanel.db")
 CUSTOM_DIR = os.path.join(ROOT, "custom_services")
 GEN_MARK = "forgepanel-scan"   # "generated_by" value of scan-written custom_services/*.json
@@ -46,6 +50,7 @@ COOKIE = "fp_session"
 MAX_BODY = 12 * 1024 * 1024
 RATE_MAX, RATE_WINDOW = 5, 300          # 5 failed attempts per 5 minutes per IP
 COMPAT_SALT, COMPAT_ITER = b"homelab-v2", 100000  # js/auth.js + scan.py export format
+TRUSTED_PROXIES = []                   # CIDRs/IPs allowed to set X-Forwarded-For (--trusted-proxy)
 
 log = logging.getLogger("forgepanel")
 
@@ -128,6 +133,8 @@ class Store:
             os.umask(old)
         os.chmod(path, 0o600)
         self.lock = threading.RLock()
+        self.db.executescript("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; "
+                              "PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;")
         self.db.executescript(SCHEMA)
         if not self.account():
             self.create_default()
@@ -137,9 +144,17 @@ class Store:
             return self.db.execute(sql, args).fetchall()
 
     def account(self):
-        cur = self.db.execute("SELECT * FROM account WHERE id=1")
-        row = cur.fetchone()
-        return dict(zip([c[0] for c in cur.description], row)) if row else None
+        with self.lock:
+            cur = self.db.execute("SELECT * FROM account WHERE id=1")
+            row = cur.fetchone()
+            return dict(zip([c[0] for c in cur.description], row)) if row else None
+
+    def close(self):
+        with self.lock:
+            try:
+                self.db.close()
+            except sqlite3.Error:
+                pass
 
     def create_default(self):
         salt = secrets.token_bytes(16)
@@ -465,10 +480,42 @@ class State:
         with self.lock:
             self.fails.pop(ip, None)
 
+    def prune(self):
+        """Drop expired sessions and stale rate-limit entries (called by the scheduler)."""
+        now = time.time()
+        with self.lock:
+            for t in [t for t, s in self.sessions.items() if s["exp"] <= now]:
+                self.sessions.pop(t, None)
+            for ip in list(self.fails):
+                lst = [t for t in self.fails[ip] if now - t < RATE_WINDOW]
+                if lst:
+                    self.fails[ip] = lst
+                else:
+                    self.fails.pop(ip, None)
+
 STATE = None
 
 def valid_pw(pw):
     return isinstance(pw, str) and len(pw) >= 6
+
+def in_cidrs(ip, nets):
+    """True when ip falls inside one of the parsed networks (IPv4-mapped IPv6 too)."""
+    try:
+        addr = ipaddress.ip_address(str(ip).strip().strip("[]"))
+    except ValueError:
+        return False
+    if addr.version == 6 and addr.ipv4_mapped:
+        addr = addr.ipv4_mapped
+    return any(addr in n for n in nets)
+
+def parse_trusted_proxies(values):
+    nets = []
+    for v in values or []:
+        try:
+            nets.append(ipaddress.ip_network(str(v).strip(), strict=False))
+        except ValueError:
+            sys.exit(f"--trusted-proxy: not an IP or CIDR: {v}")
+    return nets
 
 # ── HTTP handler ───────────────────────────────────────────────────────────
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -485,6 +532,17 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def end_headers(self):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "same-origin")
+        self.send_header("X-Frame-Options", "SAMEORIGIN")
+        self.send_header("Cross-Origin-Opener-Policy", "same-origin")
+        self.send_header("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+        # Inline handlers/styles are used throughout the single-page dashboard, so
+        # 'unsafe-inline' stays; everything else is locked to this origin.
+        self.send_header("Content-Security-Policy",
+                         "default-src 'self'; script-src 'self' 'unsafe-inline'; "
+                         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+                         "font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https: http:; "
+                         "connect-src 'self'; frame-src 'self'; frame-ancestors 'self'; "
+                         "base-uri 'self'; form-action 'self'; object-src 'none'")
         if self.path.startswith("/api/"):
             self.send_header("Cache-Control", "no-store")
         super().end_headers()
@@ -541,7 +599,20 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def do_PUT(self): self.api("PUT") if self.path.startswith("/api/") else self.send_error(405)
 
     # helpers
-    def ip(self): return self.client_address[0]
+    def ip(self):
+        peer = self.client_address[0]
+        if TRUSTED_PROXIES and in_cidrs(peer, TRUSTED_PROXIES):
+            fwd = [p.strip() for p in (self.headers.get("X-Forwarded-For") or "").split(",") if p.strip()]
+            if fwd:
+                return fwd[-1]
+        return peer
+
+    def is_https_request(self):
+        if getattr(self.server, "is_https", False):
+            return True
+        if TRUSTED_PROXIES and in_cidrs(self.client_address[0], TRUSTED_PROXIES):
+            return (self.headers.get("X-Forwarded-Proto") or "").lower() == "https"
+        return False
 
     def send_json(self, code, obj, cookie=None):
         body = json.dumps(obj).encode()
@@ -572,7 +643,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         return None
 
     def cookie(self, tok, age=SESSION_TTL):
-        secure = "; Secure" if getattr(self.server, "is_https", False) else ""
+        secure = "; Secure" if self.is_https_request() else ""
         return f"{COOKIE}={tok}; Path=/; HttpOnly; SameSite=Strict; Max-Age={age}{secure}"
 
     # API
@@ -611,6 +682,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         return True
 
 # route functions
+def r_health(h, d):
+    """Unauthenticated liveness probe for Docker/systemd/monitoring. No secrets."""
+    h.send_json(200, {"ok": True, "app": "forgepanel", "version": VERSION,
+                      "encryption": HAVE_CRYPTO, "uptime": int(time.time() - STARTED)})
+
 def r_status(h, d):
     a = STATE.store.account()
     tok = h.token()
@@ -629,6 +705,7 @@ def r_login(h, d):
     STATE.clear_fails(h.ip())
     dek = STATE.store.unlock(pw)
     STATE.set_worker(dek)
+    STATE.prune()
     tok = STATE.new_session(dek)
     h.send_json(200, {"ok": True, "mustChange": bool(STATE.store.account()["must_change"])}, h.cookie(tok))
 
@@ -967,6 +1044,7 @@ def scheduler_loop():
     while True:
         time.sleep(30)
         try:
+            STATE.prune()
             sch, _ = current_schedule()
             if not sch["interval"] or not STATE.worker["ready"]:
                 continue
@@ -1031,10 +1109,12 @@ def r_pending_post(h, d):
 UPTIME = {"interval": 60, "retention_days": 8}
 
 def uptime_key(ip, port):
-    salt = STATE.store.meta("uptime_salt")
-    if not salt:
-        salt = secrets.token_hex(16)
-        STATE.store.set_meta("uptime_salt", salt)
+    st = STATE.store
+    with st.lock:                       # two request threads must not create two salts
+        salt = st.meta("uptime_salt")
+        if not salt:
+            salt = secrets.token_hex(16)
+            st.set_meta("uptime_salt", salt)
     # opaque key so the plain uptime table does not list your hosts
     return hmac.new(salt.encode(), f"{ip}:{port}".encode(), hashlib.sha256).hexdigest()[:32]
 
@@ -1218,6 +1298,7 @@ def ensure_cert(cert, key):
     log.info("Generated self-signed certificate %s (%s)", cert, san)
 
 ROUTES = {
+    ("GET", "/api/health"): r_health,
     ("GET", "/api/schedule"): r_schedule_get,
     ("PUT", "/api/schedule"): r_schedule_put,
     ("GET", "/api/scan/history"): r_scan_history,
@@ -1249,7 +1330,7 @@ import fp_ext   # noqa: E402  (check types, push, notifications, Docker, widgets
 fp_ext.install(sys.modules[__name__])
 
 def main():
-    global STATE
+    global STATE, TRUSTED_PROXIES
     ap = argparse.ArgumentParser(description="ForgePanel server")
     ap.add_argument("--port", type=int, default=8084)
     ap.add_argument("--host", default="0.0.0.0")
@@ -1260,8 +1341,11 @@ def main():
     ap.add_argument("--uptime-interval", type=int, default=60, help="seconds between uptime checks (default 60)")
     ap.add_argument("--uptime-retention", type=int, default=8, help="days of uptime history to keep (default 8)")
     ap.add_argument("--docker-sock", default=fp_ext.DOCKER_SOCK, help="Docker socket for label discovery (read-only GETs)")
+    ap.add_argument("--trusted-proxy", action="append", metavar="CIDR",
+                    help="trust X-Forwarded-For/X-Forwarded-Proto from this proxy IP or CIDR (repeatable)")
     args = ap.parse_args()
     fp_ext.DOCKER_SOCK = args.docker_sock
+    TRUSTED_PROXIES = parse_trusted_proxies(args.trusted_proxy)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     if not HAVE_CRYPTO:
         log.warning("Python 'cryptography' not installed: dashboard data and scan results are stored "
@@ -1287,12 +1371,26 @@ def main():
     for fn in (scheduler_loop, uptime_loop, stats_loop):
         threading.Thread(target=fn, daemon=True, name=fn.__name__).start()
     log.info("ForgePanel on %s://%s:%d (database: %s)", "https" if srv.is_https else "http", args.host, args.port, db)
+    if TRUSTED_PROXIES:
+        log.info("Trusting X-Forwarded-* from %s", ", ".join(str(n) for n in TRUSTED_PROXIES))
     if HAVE_CRYPTO:
         log.info("Auto-scans and uptime checks start after the first sign-in (the data key lives in memory only)")
+
+    def stop(signum, frame):
+        raise KeyboardInterrupt
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            signal.signal(sig, stop)
+        except (ValueError, OSError):   # not the main thread (tests)
+            pass
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
         pass
+    finally:
+        srv.server_close()
+        STATE.store.close()
+        log.info("ForgePanel stopped")
 
 if __name__ == "__main__":
     main()
