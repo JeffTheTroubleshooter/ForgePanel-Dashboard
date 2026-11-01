@@ -4,6 +4,7 @@
 # Detects distro, installs python3 (with sqlite3), git, curl and the optional
 # python3 cryptography package, clones/updates the repo, prepares database/,
 # opens the firewall port and runs server.py as a systemd/OpenRC service.
+# After starting it checks GET /api/health to confirm the service is up.
 #
 # Usage:
 #   bash forgepanel-install.sh            # install
@@ -114,6 +115,14 @@ ask_user() {
     HTTPS_FLAG=" --https"
   fi
 
+  PROXY_FLAGS=""
+  if ask_yn "Is ForgePanel behind a reverse proxy (Nginx Proxy Manager, Caddy, Traefik)?"; then
+    prompt PROXY_CIDR "Trusted proxy IP or CIDR (only these may set X-Forwarded-For)" "172.16.0.0/12"
+    python3 -c 'import ipaddress,sys; ipaddress.ip_network(sys.argv[1], strict=False)' "$PROXY_CIDR" 2>/dev/null \
+      || die "Proxy must be a valid IP or CIDR, e.g. 172.16.0.0/12 or 192.168.1.10."
+    PROXY_FLAGS=" --trusted-proxy $PROXY_CIDR"
+  fi
+
   [[ "$PORT" =~ ^[0-9]+$ ]] || die "Port must be a number."
   (( PORT >= 1 && PORT <= 65535 )) || die "Port out of range."
 }
@@ -173,7 +182,7 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=$INSTALL_DIR
-ExecStart=$python $INSTALL_DIR/server.py --port $PORT --host 0.0.0.0$HTTPS_FLAG
+ExecStart=$python $INSTALL_DIR/server.py --port $PORT --host 0.0.0.0$HTTPS_FLAG$PROXY_FLAGS
 Restart=on-failure
 RestartSec=3
 User=$USER
@@ -193,7 +202,7 @@ UNIT
 #!/sbin/openrc-run
 description="ForgePanel Dashboard"
 command="$python"
-command_args="$INSTALL_DIR/server.py --port $PORT --host 0.0.0.0$HTTPS_FLAG"
+command_args="$INSTALL_DIR/server.py --port $PORT --host 0.0.0.0$HTTPS_FLAG$PROXY_FLAGS"
 command_user="$USER"
 directory="$INSTALL_DIR"
 umask=077
@@ -207,9 +216,31 @@ OPENRC
   else
     warn "No systemd or OpenRC detected. Starting in background..."
     pkill -f "$INSTALL_DIR/server.py" 2>/dev/null || true
-    (cd "$INSTALL_DIR" && umask 077 && nohup "$python" server.py --port "$PORT" --host 0.0.0.0 $HTTPS_FLAG >>"$INSTALL_DIR/database/server.log" 2>&1 &)
+    (cd "$INSTALL_DIR" && umask 077 && nohup "$python" server.py --port "$PORT" --host 0.0.0.0 $HTTPS_FLAG $PROXY_FLAGS >>"$INSTALL_DIR/database/server.log" 2>&1 &)
     ok "Started in background (log: $INSTALL_DIR/database/server.log)."
   fi
+}
+
+# ── health check ───────────────────────────────────────────────────────────
+check_health() {
+  local scheme="http" opts=(-fsS)
+  if [[ -n "$HTTPS_FLAG" ]]; then
+    scheme="https"
+    opts+=(-k)
+  fi
+  local url="$scheme://127.0.0.1:$PORT/api/health" body=""
+  info "Waiting for the service to answer $url ..."
+  for _ in $(seq 1 20); do
+    if body=$(curl "${opts[@]}" --max-time 3 "$url" 2>/dev/null) && [[ "$body" == *'"app": "forgepanel"'* ]]; then
+      ok "Service is up: $body"
+      return 0
+    fi
+    sleep 1
+  done
+  warn "No ForgePanel answer from $url after 20 s. Check the service:"
+  warn "  sudo systemctl status $SERVICE_NAME   (or: sudo rc-service $SERVICE_NAME status)"
+  warn "  log: $INSTALL_DIR/database/server.log"
+  return 1
 }
 
 # ── uninstall ──────────────────────────────────────────────────────────────
@@ -322,6 +353,7 @@ main() {
       setup_files
       create_service
       open_firewall
+      check_health || true
 
       local ip
       ip=$(hostname -I 2>/dev/null | awk '{print $1}') || ip="localhost"
@@ -335,6 +367,7 @@ main() {
       [[ -n "$HTTPS_FLAG" ]] && echo "  HTTPS: self-signed cert in $INSTALL_DIR/database/certs/ (see README: trusting the certificate)"
       echo "  Files: $INSTALL_DIR"
       echo "  Database: $INSTALL_DIR/database/forgepanel.db (back this folder up)"
+      echo "  Health: $scheme://${ip:-localhost}:$PORT/api/health"
       echo
       echo "Default login (change on first use): admin / forgepanel"
       echo
