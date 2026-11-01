@@ -1,0 +1,25 @@
+services:
+  forgepanel:
+    build: .
+    image: forgepanel:local
+    container_name: forgepanel
+    restart: unless-stopped
+    ports:
+      - "8084:8084"
+    volumes:
+      # Database, certificates and all encrypted dashboard data.
+      - forgepanel-data:/app/database
+      # Scan-written custom_services/*.json files.
+      - forgepanel-custom:/app/custom_services
+      # Optional: read-only Docker socket for "Import from Docker" discovery.
+      # - /var/run/docker.sock:/var/run/docker.sock:ro
+    # Uncomment to serve HTTPS with a self-signed certificate:
+    # command: ["--https"]
+    #
+    # Behind a reverse proxy that terminates TLS, trust its address so login
+    # rate limiting sees real client IPs and cookies get the Secure flag:
+    # command: ["--trusted-proxy", "172.16.0.0/12"]
+
+volumes:
+  forgepanel-data:
+  forgepanel-custom:

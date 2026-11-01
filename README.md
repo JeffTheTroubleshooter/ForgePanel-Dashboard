@@ -28,6 +28,8 @@ Hover a tile to see its name, URL and status. Click it to open the service. Whil
 - Forgot password and username recovery
 - Animated background
 - Network scan that finds services and adds them automatically
+- `GET /api/health` liveness endpoint for Docker/systemd/monitoring
+- Runs in Docker as an unprivileged user (see [Docker](#docker))
 
 ## Screenshots
 
@@ -63,6 +65,9 @@ ForgePanel-Dashboard/
 ├── index.html
 ├── server.py            # static files + JSON API + SQLite
 ├── fp_ext.py            # check types, push, notifications, Docker, widgets, /status (stdlib)
+├── Dockerfile           # container image (python:3.12-slim, non-root)
+├── docker-compose.yml   # example compose file with named volumes
+├── requirements.txt     # optional encryption dependency
 ├── database/            # forgepanel.db lives here (gitignored, never served)
 ├── pages/
 │   ├── login.html
@@ -81,10 +86,14 @@ ForgePanel-Dashboard/
 ├── config/
 │   └── forgepanel.conf
 ├── custom_services/
-└── scan/
-    ├── scan.py
-    ├── scan.conf
-    └── results.example.json
+├── scan/
+│   ├── scan.py
+│   ├── scan.conf
+│   └── results.example.json
+├── tests/
+│   ├── griddrag.test.js
+│   └── test_server.py   # API + storage integration tests
+└── .github/workflows/ci.yml
 ```
 
 ## Network Scan
@@ -125,7 +134,7 @@ Each tile's menu (⋮ → **Check & widget…**) picks how the service is checke
 | DNS | the tile's IP, used as a DNS server (port 53 by default), answers an A query for the name |
 | Push | the service called its push URL within the interval |
 
-**Push monitors.** Choosing Push creates a unique URL, for example `http://forgepanel:8084/api/push/<token>`. Call it from a cron job or script, e.g. `curl -fsS http://forgepanel:8084/api/push/<token>`. Add `?status=down` to report a failure. The service is marked down if no push arrives within the interval (+5 s grace). The URL needs no login: the token is the only credential. It is stored hashed in SQLite, is never written to the log, and can be regenerated or revoked from the same dialog.
+**Push monitors.** Choosing Push creates a unique URL, for example `http://forgepanel:8084/api/push/<token>`. Call it from a cron job or script, e.g. `curl -fsS http://forgepanel:8084/api/push/<token>`. Add `?status=down` to report a failure, and `?ping=42` to record a response time (milliseconds) for the tile's sparkline and graph. The service is marked down if no push arrives within the interval (+5 s grace). The URL needs no login: the token is the only credential. It is stored hashed in SQLite, is never written to the log, and can be regenerated or revoked from the same dialog.
 
 ## Notifications (Experimental)
 
@@ -187,6 +196,28 @@ Start with `--https` (or answer *yes* in the installer). On first start the serv
 
 Your browser will warn because the certificate is self-signed. Either accept the warning once, or trust it: copy `database/certs/server.crt` to your computer and import it — Windows: *certmgr.msc → Trusted Root Certification Authorities*; macOS: Keychain Access → System → set *Always Trust*; Linux: copy to `/usr/local/share/ca-certificates/forgepanel.crt` and run `sudo update-ca-certificates`; Firefox: *Settings → Certificates → Authorities → Import*. If the server's IP or hostname changes, delete `database/certs/` and restart to make a new one.
 
+### Behind a reverse proxy
+
+If you terminate TLS in front of ForgePanel (Nginx Proxy Manager, Caddy, Traefik…), the server sees the proxy's IP for every request. That makes the 5-attempt login limit global, and the session cookie loses its `Secure` flag. Tell ForgePanel which proxies to trust:
+
+```bash
+python3 server.py --trusted-proxy 172.16.0.0/12 --trusted-proxy 127.0.0.1
+```
+
+Only requests whose peer is in a trusted range are allowed to set `X-Forwarded-For` / `X-Forwarded-Proto`, so never add ranges that untrusted clients can come from. Do **not** enable this if the server is directly reachable.
+
+## Health Check
+
+`GET /api/health` needs no login and returns no secrets. It is meant for Docker, systemd and uptime monitors:
+
+```json
+{"ok": true, "app": "forgepanel", "version": "1.1.0", "encryption": true, "uptime": 8123}
+```
+
+```bash
+curl -fsS http://localhost:8084/api/health
+```
+
 ## Database and Security
 
 - `server.py` keeps everything in `database/forgepanel.db` (SQLite, file 0600, folder 0700). The server never serves `database/`, `scan/results.*`, `config/`, `.py`/`.sh`/`.conf` files or dotfiles, and has no directory listings.
@@ -220,6 +251,28 @@ sudo systemctl restart forgepanel
 sudo systemctl disable --now forgepanel   # stop and remove from boot
 ```
 
+## Docker
+
+A `Dockerfile` and `docker-compose.yml` are included. The image runs as an unprivileged user (`uid 10001`), keeps `database/` and `custom_services/` in volumes, and has a built-in health check against `/api/health`.
+
+```bash
+docker compose up -d --build
+```
+
+Then open `http://<your-server-ip>:8084`. To pass extra flags (for example HTTPS):
+
+```bash
+docker compose run --rm -p 8084:8084 forgepanel --https
+# or edit docker-compose.yml and uncomment:  command: ["--https"]
+```
+
+Notes:
+
+- Data lives in the `forgepanel-data` volume. Back it up with `docker run --rm -v forgepanel-data:/data -v "$PWD":/backup alpine tar czf /backup/forgepanel-database.tgz -C /data .`, or use **Export** in the dashboard.
+- For **Import from Docker**, mount the socket read-only: `/var/run/docker.sock:/var/run/docker.sock:ro`.
+- With a bind mount instead of a named volume, make it writable by uid 10001: `sudo chown -R 10001:10001 ./database`.
+- To serve HTTPS with your own certificate, mount it and pass `--https --cert /certs/server.crt --key /certs/server.key`.
+
 ## Uninstall
 
 Run the same script with `uninstall`:
@@ -236,10 +289,24 @@ It stops and removes the `forgepanel` service (systemd, or OpenRC on Alpine), as
 cd ForgePanel-Dashboard
 python3 server.py                 # http://localhost:8084, database in database/
 python3 server.py --port 8084 --host 0.0.0.0 --db database/forgepanel.db
-# optional: --https [--cert FILE --key FILE] --uptime-interval 60 --uptime-retention 8 --docker-sock /var/run/docker.sock
+# optional: --https [--cert FILE --key FILE] --uptime-interval 60 --uptime-retention 8
+#           --docker-sock /var/run/docker.sock --trusted-proxy 172.16.0.0/12
 ```
 
 Then open `http://localhost:8084` (or `http://<server-ip>:8084`). A plain static server (`python3 -m http.server`) no longer works, because the dashboard needs the API.
+
+## Development and Tests
+
+Everything is Python standard library plus the optional `cryptography` package. There is no build step and no `node_modules`.
+
+```bash
+python3 -m pip install -r requirements.txt      # optional: encryption at rest
+python3 -m unittest discover -s tests -v        # API + storage integration tests
+node tests/griddrag.test.js                     # tile drag insertion index
+python3 -m py_compile server.py fp_ext.py scan/scan.py
+```
+
+The Python tests start a real HTTP server on an ephemeral port with a temporary database, so they never touch `database/` or your live data. CI runs them on Python 3.9, 3.11 and 3.13, runs the JavaScript test, and builds the Docker image.
 
 ## License
 

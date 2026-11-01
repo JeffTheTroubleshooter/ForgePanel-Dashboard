@@ -1,0 +1,3 @@
+# Optional, but strongly recommended: enables AES-256-GCM encryption at rest
+# for dashboard data, custom services, scan results and stored secrets.
+cryptography>=41

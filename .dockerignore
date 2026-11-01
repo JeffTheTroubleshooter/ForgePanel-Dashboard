@@ -1,0 +1,20 @@
+.git
+.github
+.gitignore
+__pycache__
+*.pyc
+*.pyo
+
+# Local data and secrets never belong in an image
+database/*
+!database/.gitkeep
+!database/README.md
+custom_services/*.json
+!custom_services/example.json
+scan/results.*
+!scan/results.example.json
+
+# Repo-only material
+screenshots
+tests
+README.md
