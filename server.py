@@ -46,6 +46,8 @@ DEFAULT_DB = os.path.join(ROOT, "database", "forgepanel.db")
 CUSTOM_DIR = os.path.join(ROOT, "custom_services")
 GEN_MARK = "forgepanel-scan"   # "generated_by" value of scan-written custom_services/*.json
 SESSION_TTL = 12 * 3600
+IDLE_TIMEOUT = 60                      # seconds without user activity before a session is rejected (--idle-timeout)
+PASSIVE_HEADER = "X-FP-Passive"        # requests carrying this (background polling) do not refresh last-seen
 COOKIE = "fp_session"
 MAX_BODY = 12 * 1024 * 1024
 RATE_MAX, RATE_WINDOW = 5, 300          # 5 failed attempts per 5 minutes per IP
@@ -437,7 +439,7 @@ def load_scanner():
 class State:
     def __init__(self, store):
         self.store = store
-        self.sessions = {}      # token -> {"exp": t, "dek": key|None}
+        self.sessions = {}      # token -> {"exp": t, "seen": t, "dek": key|None}
         self.fails = {}         # ip -> [timestamps]
         self.lock = threading.Lock()
         self.scan = {"running": False, "error": None, "started": None, "source": None}
@@ -451,13 +453,23 @@ class State:
     def new_session(self, dek):
         tok = secrets.token_urlsafe(32)
         with self.lock:
-            self.sessions[tok] = {"exp": time.time() + SESSION_TTL, "dek": dek}
+            now = time.time()
+            self.sessions[tok] = {"exp": now + SESSION_TTL, "seen": now, "dek": dek}
         return tok
 
-    def get_session(self, tok):
+    @staticmethod
+    def _alive(s, now):
+        return s["exp"] > now and (IDLE_TIMEOUT <= 0 or now - s.get("seen", now) <= IDLE_TIMEOUT)
+
+    def get_session(self, tok, touch=False):
+        """Return the live session for tok, or None. Sessions idle longer than IDLE_TIMEOUT are
+        dropped. touch=True marks real user activity (refreshes last-seen)."""
+        now = time.time()
         with self.lock:
             s = self.sessions.get(tok)
-            if s and s["exp"] > time.time():
+            if s and self._alive(s, now):
+                if touch:
+                    s["seen"] = now
                 return s
             self.sessions.pop(tok, None)
             return None
@@ -486,7 +498,7 @@ class State:
         """Drop expired sessions and stale rate-limit entries (called by the scheduler)."""
         now = time.time()
         with self.lock:
-            for t in [t for t, s in self.sessions.items() if s["exp"] <= now]:
+            for t in [t for t, s in self.sessions.items() if not self._alive(s, now)]:
                 self.sessions.pop(t, None)
             for ip in list(self.fails):
                 lst = [t for t in self.fails[ip] if now - t < RATE_WINDOW]
@@ -669,7 +681,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def need_session(self, allow_must_change=False):
         tok = self.token()
-        s = STATE.get_session(tok) if tok else None
+        passive = (self.headers.get(PASSIVE_HEADER) or "") == "1"
+        s = STATE.get_session(tok, touch=not passive) if tok else None
         if not s:
             self.send_json(401, {"error": "Not signed in"})
             return None, None
@@ -787,7 +800,14 @@ def r_status(h, d):
     s = STATE.get_session(tok) if tok else None
     h.send_json(200, {"authenticated": bool(s), "user": a["user"] if s else None,
                       "mustChange": bool(a["must_change"]) if s else None,
-                      "hasSecurity": bool(a["sec_hash"]), "encryption": HAVE_CRYPTO})
+                      "hasSecurity": bool(a["sec_hash"]), "encryption": HAVE_CRYPTO,
+                      "idleTimeout": IDLE_TIMEOUT})
+
+def r_heartbeat(h, d):
+    """Sent by the client only on real user activity; refreshes the session's last-seen."""
+    tok, s = h.need_session(allow_must_change=True)
+    if tok:
+        h.send_json(200, {"ok": True, "idleTimeout": IDLE_TIMEOUT})
 
 def r_login(h, d):
     if not h.rate_check():
@@ -1420,6 +1440,7 @@ ROUTES = {
     ("GET", "/api/status"): r_status,
     ("POST", "/api/login"): r_login,
     ("POST", "/api/logout"): r_logout,
+    ("POST", "/api/heartbeat"): r_heartbeat,
     ("POST", "/api/credentials"): r_credentials,
     ("GET", "/api/security-question"): r_secq,
     ("POST", "/api/forgot-password"): r_forgot_pw,
@@ -1440,7 +1461,7 @@ import fp_ext   # noqa: E402  (check types, push, notifications, Docker, widgets
 fp_ext.install(sys.modules[__name__])
 
 def main():
-    global STATE, TRUSTED_PROXIES
+    global STATE, TRUSTED_PROXIES, IDLE_TIMEOUT
     ap = argparse.ArgumentParser(description="ForgePanel server")
     ap.add_argument("--port", type=int, default=8084)
     ap.add_argument("--host", default="0.0.0.0")
@@ -1453,7 +1474,10 @@ def main():
     ap.add_argument("--docker-sock", default=fp_ext.DOCKER_SOCK, help="Docker socket for label discovery (read-only GETs)")
     ap.add_argument("--trusted-proxy", action="append", metavar="CIDR",
                     help="trust X-Forwarded-For/X-Forwarded-Proto from this proxy IP or CIDR (repeatable)")
+    ap.add_argument("--idle-timeout", type=int, default=IDLE_TIMEOUT,
+                    help="sign out sessions after this many seconds without user activity (default 60, 0 = off)")
     args = ap.parse_args()
+    IDLE_TIMEOUT = max(0, args.idle_timeout)
     fp_ext.DOCKER_SOCK = args.docker_sock
     TRUSTED_PROXIES = parse_trusted_proxies(args.trusted_proxy)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")

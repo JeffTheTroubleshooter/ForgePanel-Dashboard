@@ -4,9 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ForgePanel</title>
-<link rel="icon" type="image/png" sizes="32x32" href="../assets/favicon-32.png?v=20261102g">
-<link rel="icon" type="image/png" sizes="192x192" href="../assets/favicon-192.png?v=20261102g">
-<link rel="apple-touch-icon" href="../assets/favicon-192.png?v=20261102g">
+<link rel="icon" type="image/png" sizes="32x32" href="../assets/favicon-32.png?v=20261102h">
+<link rel="icon" type="image/png" sizes="192x192" href="../assets/favicon-192.png?v=20261102h">
+<link rel="apple-touch-icon" href="../assets/favicon-192.png?v=20261102h">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
@@ -92,22 +92,25 @@
   }
   button.link:hover { color: var(--text); }
   .links { display: flex; gap: 1.5rem; margin-top: 0.5rem; }
+  .notice { color: var(--yellow, #e3b341); font-size: 0.85rem; text-align: center; margin: 0 0 0.75rem; padding: 0.5rem 0.75rem; border: 1px solid currentColor; border-radius: 6px; }
+  .notice[hidden] { display: none; }
   .error { color: var(--red); font-size: 0.8rem; min-height: 1.1em; text-align: center; }
   .credit { display:block; margin-top:1rem; text-align:center; color:#666; font-size:0.7rem; text-decoration:none; }
   .credit:hover { color:#00e5cc; }
 </style>
-<link rel="stylesheet" href="../css/main.css?v=20261102g">
+<link rel="stylesheet" href="../css/main.css?v=20261102h">
 </head>
 <body>
 <iframe id="bg" src="dots.html"></iframe>
 
 <div id="login" class="screen active">
   <div class="card">
-    <img src="../assets/logo.svg?v=20261102g" alt="ForgePanel logo" style="width:64px;height:64px;display:block;margin:0 auto 0.75rem;">
+    <img src="../assets/logo.svg?v=20261102h" alt="ForgePanel logo" style="width:64px;height:64px;display:block;margin:0 auto 0.75rem;">
     <h1>FORGEPANEL</h1>
     <p id="login-mode">Sign in to your dashboard</p>
     <input type="text" id="user" placeholder="Username" autocomplete="username">
     <input type="password" id="pw" placeholder="Password" autocomplete="current-password">
+    <div class="notice" id="login-notice" role="status" hidden></div>
     <button class="primary" id="auth-btn" onclick="auth()">Sign In</button>
     <div class="error" id="login-error"></div>
     <div class="links">
@@ -167,7 +170,7 @@
   </div>
 </div>
 
-<script src="../js/auth.js?v=20261102g"></script>
+<script src="../js/auth.js?v=20261102h"></script>
 <script>
 let loginPw = "";  // kept only in memory for the change-credentials step
 function showScreen(id) {
@@ -175,6 +178,11 @@ function showScreen(id) {
   document.getElementById(id).classList.add("active");
 }
 async function init() {
+  if (new URLSearchParams(location.search).get("reason") === "inactivity") {
+    const n = document.getElementById("login-notice");
+    n.textContent = "You have been logged out due to inactivity.";
+    n.hidden = false;
+  }
   try {
     const st = await api("status");
     if (st.authenticated && !st.mustChange) { location.href = "dashboard.html"; return; }

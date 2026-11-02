@@ -173,6 +173,33 @@ class ForgePanelTest(unittest.TestCase):
         self.assertIn("default-src 'self'", hdrs.get("Content-Security-Policy", ""))
         self.assertEqual(hdrs.get("X-Content-Type-Options"), "nosniff")
 
+    def test_idle_session_expires_and_passive_polls_do_not_refresh(self):
+        cookie = self.complete_setup()
+        old = server.IDLE_TIMEOUT
+        server.IDLE_TIMEOUT = 60
+        try:
+            tok = cookie.split("=", 1)[1]
+            sess = server.STATE.sessions[tok]
+            # Real activity (no passive header) refreshes last-seen.
+            sess["seen"] = time.time() - 50
+            st, _, _, _ = self.req("POST", "/api/heartbeat", {}, cookie=cookie)
+            self.assertEqual(st, 200)
+            self.assertGreater(sess["seen"], time.time() - 5)
+            # Background polling with X-FP-Passive does not refresh it.
+            sess["seen"] = time.time() - 50
+            st, _, _, _ = self.req("GET", "/api/data", headers={"X-FP-Passive": "1"}, cookie=cookie)
+            self.assertEqual(st, 200)
+            self.assertLess(sess["seen"], time.time() - 45)
+            # Idle past the limit: rejected and dropped.
+            sess["seen"] = time.time() - 61
+            st, d, _, _ = self.req("GET", "/api/data", headers={"X-FP-Passive": "1"}, cookie=cookie)
+            self.assertEqual(st, 401)
+            st, d, _, _ = self.req("GET", "/api/status", cookie=cookie)
+            self.assertFalse(d["authenticated"])
+            self.assertNotIn(tok, server.STATE.sessions)
+        finally:
+            server.IDLE_TIMEOUT = old
+
     def test_private_api_requires_a_session(self):
         for path in ("/api/data", "/api/custom", "/api/stats", "/api/schedule"):
             st, d, _, _ = self.req("GET", path)
