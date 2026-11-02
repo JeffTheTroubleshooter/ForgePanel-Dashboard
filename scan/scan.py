@@ -254,6 +254,21 @@ def _passive(sig, root):
     return ev
 
 
+UNKNOWN_NAME = "Unknown service"
+HTTPS_ONLY_RE = re.compile(r"plain HTTP request was sent to HTTPS port|HTTP request to an HTTPS server|"
+                           r"speaking plain HTTP to an SSL-enabled server", re.I)
+NPM_DEFAULT_RE = re.compile(r"successfully started the Nginx Proxy Manager", re.I)
+
+
+def is_https_only(r):
+    return r is not None and r.status == 400 and HTTPS_ONLY_RE.search(r.body or "") is not None
+
+
+def is_npm_default_site(r):
+    """NPM's catch-all 'Default Site' page (ports 80/443 with no matching proxy host)."""
+    return r is not None and r.status < 400 and NPM_DEFAULT_RE.search(r.body or "") is not None
+
+
 def fingerprint(host, port, conf, get=None):
     """Identify ONE host:port from its own responses. Returns a dict with name, confidence, evidence.
 
@@ -266,16 +281,34 @@ def fingerprint(host, port, conf, get=None):
     scheme, root = None, None
     for sch in (["https", "http"] if tls_first else ["http", "https"]):
         r = get(sch, "/")
-        if r is not None:
-            scheme, root = sch, r
-            break
-    out = {"name": f"Unknown service ({host}:{port})", "match": "custom", "icon": None,
+        if r is None:
+            continue
+        if sch == "http" and is_https_only(r):
+            # nginx/openresty "plain HTTP request was sent to HTTPS port": retry over TLS, never label this page
+            r2 = get("https", "/")
+            if r2 is not None:
+                scheme, root = "https", r2
+                break
+        scheme, root = sch, r
+        break
+    out = {"name": UNKNOWN_NAME, "where": f"{host}:{port}", "match": "custom", "icon": None,
            "confidence": "low", "evidence": [], "identified_by": "unknown",
            "scheme": scheme or ("https" if tls_first else "http"), "http": root is not None,
            "title": root.title() if root else "", "server": (root.header("server")[:120] if root else ""),
            "status": root.status if root else None}
     if root is None:
         out["evidence"] = ["open TCP port, no HTTP response"]
+        return out
+
+    if is_https_only(root):
+        hn = conf.get("ports", {}).get(port, [])
+        out["evidence"] = ["HTTP 400 plain-HTTP-to-HTTPS, HTTPS retry failed (not used for naming)"] + \
+            ([f"port hint: {canonical(hn[0])}"] if hn else [])
+        return out
+    if is_npm_default_site(root):
+        # The proxy's own placeholder: says nothing about what else runs on this host.
+        out.update(name="NPM Default Site", icon="npm.png", confidence="low",
+                   evidence=["NPM default page"], identified_by="NPM default page", match="custom")
         return out
 
     hints = [canonical(n) for n in conf.get("ports", {}).get(port, [])]
@@ -383,7 +416,7 @@ def scan(conf, hosts):
         h, p = hp
         if not conf["http_probe"]:
             hints = conf["ports"].get(p, [])
-            return {"ip": h, "port": p, "name": f"Unknown service ({h}:{p})", "match": "custom", "icon": None,
+            return {"ip": h, "port": p, "name": UNKNOWN_NAME, "where": f"{h}:{p}", "match": "custom", "icon": None,
                     "confidence": "low", "evidence": ["open TCP port"] + ([f"port hint: {hints[0]}"] if hints else []),
                     "identified_by": "unknown", "scheme": "https" if p in conf["https_ports"] else "http",
                     "http": False, "title": "", "server": "", "status": None}

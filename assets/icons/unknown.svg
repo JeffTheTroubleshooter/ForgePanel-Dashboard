@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Unknown service">
+  <title>Unknown service</title>
+  <!-- Figure scratching its head: light gray for dark tiles, red accent on the question mark -->
+  <g fill="#e6e8ec">
+    <circle cx="30" cy="20" r="8.5"/>
+    <path d="M30 31c-12.2 0-20 8.6-20 19.3C10 58 14 62 18.5 62h23C46 62 50 58 50 50.3 50 39.6 42.2 31 30 31z"/>
+  </g>
+  <path d="M11.5 36.5 6.6 28.3c-.8-1.4-.3-2.9 1.1-3.6l9.3-4.8" fill="none" stroke="#e6e8ec" stroke-width="4.6" stroke-linecap="round" stroke-linejoin="round"/>
+  <g fill="none" stroke="#ef4444" stroke-width="4.6" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M43 9.2c.7-3.6 3.6-5.7 7.1-5.7 4 0 7.1 2.6 7.1 6.3 0 3.1-2 4.6-4.4 5.9-1.9 1-2.8 2-2.8 4.2"/>
+  </g>
+  <circle cx="50" cy="26.4" r="2.9" fill="#ef4444"/>
+</svg>

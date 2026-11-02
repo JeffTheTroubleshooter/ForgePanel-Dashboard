@@ -108,6 +108,60 @@ class ForgePanelTest(unittest.TestCase):
         st, d, _, _ = self.req("PUT", "/api/data", {"saved": saved}, cookie=cookie)
         self.assertEqual(st, 200, d)
 
+    # ── user icons ──────────────────────────────────────────────────────────
+    def test_icon_upload_serve_and_limits(self):
+        import base64
+        cookie = self.complete_setup()
+        png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
+        url = "data:image/png;base64," + base64.b64encode(png).decode()
+        st, d, _, _ = self.req("POST", "/api/icons", {"data": url})
+        self.assertEqual(st, 401)
+        st, d, _, _ = self.req("POST", "/api/icons", {"data": url}, cookie=cookie)
+        self.assertEqual(st, 200, d)
+        self.assertTrue(d["url"].startswith("/api/icons/"))
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        conn.request("GET", d["url"], headers={"Cookie": cookie})
+        r = conn.getresponse(); body = r.read(); conn.close()
+        self.assertEqual(r.status, 200)
+        self.assertEqual(body, png)
+        self.assertEqual(r.getheader("Content-Type"), "image/png")
+        self.assertIn("sandbox", " ".join(v for k, v in r.getheaders() if k.lower() == "content-security-policy"))
+        st, _, _, _ = self.req("GET", d["url"])
+        self.assertEqual(st, 401)
+        # persisted through the tiles storage
+        self.put_data({"_custom": [{"id": "a1", "name": "X", "ip": "10.0.0.5", "port": 80, "logo": d["url"]}]}, cookie)
+        st, g, _, _ = self.req("GET", "/api/data", cookie=cookie)
+        self.assertEqual(g["saved"]["_custom"][0]["logo"], d["url"])
+        big = "data:image/png;base64," + base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"\x00" * (300 * 1024)).decode()
+        st, d, _, _ = self.req("POST", "/api/icons", {"data": big}, cookie=cookie)
+        self.assertEqual(st, 400)
+        st, d, _, _ = self.req("POST", "/api/icons", {"data": "data:image/png;base64," + base64.b64encode(b"GIF89a....").decode()}, cookie=cookie)
+        self.assertEqual(st, 400)
+
+    def test_svg_icon_sanitized(self):
+        import base64
+        cookie = self.complete_setup()
+        enc = lambda t: "data:image/svg+xml;base64," + base64.b64encode(t.encode()).decode()
+        ok = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><circle cx="4" cy="4" r="3" fill="#fff"/></svg>'
+        st, d, _, _ = self.req("POST", "/api/icons", {"data": enc(ok)}, cookie=cookie)
+        self.assertEqual(st, 200, d)
+        for bad in ['<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>',
+                    '<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"></svg>',
+                    '<svg xmlns="http://www.w3.org/2000/svg"><image href="https://evil/x.png"/></svg>',
+                    '<svg xmlns="http://www.w3.org/2000/svg"><foreignObject></foreignObject></svg>']:
+            st, d, _, _ = self.req("POST", "/api/icons", {"data": enc(bad)}, cookie=cookie)
+            self.assertEqual(st, 400, bad)
+
+    def test_bundled_icons_list_has_unknown_not_generic(self):
+        cookie = self.complete_setup()
+        st, d, _, _ = self.req("GET", "/api/icons/bundled", cookie=cookie)
+        self.assertEqual(st, 200)
+        names = [x["name"] for x in d["icons"]]
+        self.assertIn("unknown", names)
+        self.assertIn("nextcloud", names)
+        self.assertNotIn("generic", names)
+        self.assertTrue(os.path.exists(os.path.join(ROOT, "assets", "icons", "unknown.svg")))
+
     # ── basic surface ───────────────────────────────────────────────────────
     def test_health_is_public_and_sets_security_headers(self):
         st, d, _, hdrs = self.req("GET", "/api/health")

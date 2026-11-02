@@ -117,6 +117,7 @@ CREATE TABLE IF NOT EXISTS custom_services (id INTEGER PRIMARY KEY AUTOINCREMENT
 CREATE TABLE IF NOT EXISTS uptime (key TEXT NOT NULL, ts INTEGER NOT NULL, up INTEGER NOT NULL, ms REAL);
 CREATE INDEX IF NOT EXISTS uptime_key_ts ON uptime (key, ts);
 CREATE TABLE IF NOT EXISTS meta (name TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS icons (id TEXT PRIMARY KEY, mime TEXT NOT NULL, data BLOB NOT NULL, created INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS scan_results (id INTEGER PRIMARY KEY AUTOINCREMENT, created TEXT NOT NULL, source TEXT NOT NULL, enc INTEGER NOT NULL, blob TEXT NOT NULL);
 """
 
@@ -655,6 +656,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return self.send_json(415, {"error": "Content-Type must be application/json"})  # CSRF guard
             data = self.body() if method != "GET" else {}
             fn = ROUTES.get((method, route))
+            if not fn and method == "GET" and route.startswith(ICON_PREFIX):
+                fn = r_icon_get
             if not fn:
                 return self.send_json(404, {"error": "Not found"})
             fn(self, data)
@@ -681,6 +684,96 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_json(429, {"error": f"Too many attempts. Try again in {wait}s."})
             return False
         return True
+
+# ── user icons (uploaded tile logos, stored in SQLite) ─────────────────────
+ICON_PREFIX = "/api/icons/"
+ICON_MAX = 256 * 1024
+ICON_MIMES = {"png": "image/png", "jpeg": "image/jpeg", "webp": "image/webp", "svg": "image/svg+xml"}
+ICON_DIR = os.path.join(ROOT, "assets", "icons")
+_SVG_BAD = re.compile(r"<\s*(script|foreignobject|iframe|embed|object|audio|video|handler|listener)\b|"
+                      r"\bon[a-z]+\s*=|javascript:|data:text/html|<!entity|<!doctype|"
+                      r"(?:xlink:)?href\s*=\s*[\"'](?!#)|url\(\s*['\"]?(?!#)|@import", re.I)
+
+
+def sniff_icon(raw):
+    """Return the icon kind from magic bytes, or None."""
+    if raw.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "png"
+    if raw.startswith(b"\xff\xd8\xff"):
+        return "jpeg"
+    if raw[:4] == b"RIFF" and raw[8:12] == b"WEBP":
+        return "webp"
+    head = raw[:1024].lstrip().lower()
+    if head.startswith(b"<?xml") or head.startswith(b"<svg") or head.startswith(b"<!--"):
+        if b"<svg" in raw[:4096].lower():
+            return "svg"
+    return None
+
+
+def svg_is_safe(raw):
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    return _SVG_BAD.search(text) is None
+
+
+def parse_icon_upload(data):
+    """data: 'data:image/...;base64,...' -> (kind, bytes). Raises ValueError."""
+    m = re.fullmatch(r"data:image/[a-z0-9.+-]+;base64,([A-Za-z0-9+/=\s]+)", str(data or ""))
+    if not m:
+        raise ValueError("Icon must be a base64 image data URL")
+    if len(m.group(1)) > ICON_MAX * 4 // 3 + 8:
+        raise ValueError("Icon too large (max 256 KB)")
+    raw = b64d(re.sub(r"\s+", "", m.group(1)))
+    if len(raw) > ICON_MAX:
+        raise ValueError("Icon too large (max 256 KB)")
+    kind = sniff_icon(raw)
+    if not kind:
+        raise ValueError("Unsupported image (PNG, JPG, WebP or SVG only)")
+    if kind == "svg" and not svg_is_safe(raw):
+        raise ValueError("SVG rejected: scripts, event handlers and external references are not allowed")
+    return kind, raw
+
+
+def r_icon_upload(h, d):
+    tok, s = h.need_session()
+    if not tok:
+        return
+    kind, raw = parse_icon_upload(d.get("data"))
+    iid = hashlib.sha256(raw).hexdigest()[:32]
+    STATE.store.q("INSERT OR IGNORE INTO icons (id, mime, data, created) VALUES (?,?,?,?)",
+                  (iid, ICON_MIMES[kind], raw, int(time.time())))
+    h.send_json(200, {"ok": True, "id": iid, "url": ICON_PREFIX + iid})
+
+
+def r_icon_get(h, d):
+    tok, s = h.need_session(allow_must_change=True)
+    if not tok:
+        return
+    iid = urllib.parse.urlsplit(h.path).path[len(ICON_PREFIX):].strip("/")
+    rows = STATE.store.q("SELECT mime, data FROM icons WHERE id=?", (iid,)) if re.fullmatch(r"[0-9a-f]{32}", iid) else []
+    if not rows:
+        return h.send_json(404, {"error": "Not found"})
+    mime, raw = rows[0]
+    h.send_response(200)
+    h.send_header("Content-Type", mime)
+    h.send_header("Content-Length", str(len(raw)))
+    h.send_header("Content-Disposition", "inline")
+    # served as an image only: no scripts, no navigation even if opened directly
+    h.send_header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox")
+    h.end_headers()
+    h.wfile.write(bytes(raw))
+
+
+def r_icon_bundled(h, d):
+    tok, s = h.need_session()
+    if not tok:
+        return
+    names = sorted(f for f in os.listdir(ICON_DIR) if re.fullmatch(r"[a-z0-9_-]+\.(png|svg|jpg|webp)", f)) \
+        if os.path.isdir(ICON_DIR) else []
+    h.send_json(200, {"icons": [{"name": os.path.splitext(f)[0], "url": "/assets/icons/" + f} for f in names]})
+
 
 # route functions
 def r_health(h, d):
@@ -1314,6 +1407,8 @@ def ensure_cert(cert, key):
 
 ROUTES = {
     ("GET", "/api/health"): r_health,
+    ("POST", "/api/icons"): r_icon_upload,
+    ("GET", "/api/icons/bundled"): r_icon_bundled,
     ("GET", "/api/schedule"): r_schedule_get,
     ("PUT", "/api/schedule"): r_schedule_put,
     ("GET", "/api/scan/history"): r_scan_history,

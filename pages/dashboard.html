@@ -6,9 +6,9 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <title>ForgePanel</title>
-<link rel="icon" type="image/png" sizes="32x32" href="../assets/favicon-32.png?v=20261102b">
-<link rel="icon" type="image/png" sizes="192x192" href="../assets/favicon-192.png?v=20261102b">
-<link rel="apple-touch-icon" href="../assets/favicon-192.png?v=20261102b">
+<link rel="icon" type="image/png" sizes="32x32" href="../assets/favicon-32.png?v=20261102c">
+<link rel="icon" type="image/png" sizes="192x192" href="../assets/favicon-192.png?v=20261102c">
+<link rel="apple-touch-icon" href="../assets/favicon-192.png?v=20261102c">
 <style>
   :root {
     --bg: #0a0a0a;
@@ -79,6 +79,14 @@
   .icon:hover { border-color: var(--cyan); }
   .icon:focus-visible, .spark:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
   .icon img { width: 30px; height: 30px; object-fit: contain; }
+  .iconpick { display:flex; flex-direction:column; gap:.6rem; text-align:left; }
+  .iconpick input[type=search], .iconpick input[type=url] { width:100%; }
+  .ip-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(72px, 1fr)); gap:.4rem; max-height:220px; overflow:auto; }
+  .ip-item { aspect-ratio:1/1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:.2rem; background:var(--bg, #111); border:1px solid var(--border); border-radius:8px; color:inherit; font-size:.65rem; cursor:pointer; padding:.3rem; overflow:hidden; }
+  .ip-item img { width:32px; height:32px; object-fit:contain; }
+  .ip-item span { max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .ip-item.sel, .ip-item:hover { border-color:var(--red); }
+  .ip-row { display:flex; flex-direction:column; gap:.25rem; font-size:.8rem; }
   .status { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
   .status.online { background: var(--green); box-shadow: 0 0 8px var(--green); }
   .status.offline { background: var(--red); animation: flash 0.7s ease-in-out infinite; }
@@ -246,7 +254,7 @@
   .brand-logo { width:64px; height:64px; display:block; }
   .cm-bubble { position:absolute; left:calc(100% + 12px); top:50%; transform:translateY(-50%); white-space:nowrap; background:#141414; border:1px solid #2a2a2a; border-left:2px solid #ff2a2a; color:#e5e5e5; font-size:12px; padding:5px 10px; border-radius:10px; pointer-events:none; }
 </style>
-<link rel="stylesheet" href="../css/main.css?v=20261102b">
+<link rel="stylesheet" href="../css/main.css?v=20261102c">
 </head>
 <body>
 <iframe id="bg" src="dots.html"></iframe>
@@ -255,7 +263,7 @@
   <header>
     <h1 class="sr-only">ForgePanel – Service Dashboard</h1>
     <div class="brand-wrap">
-      <button class="brand-btn" id="brand-btn" onclick="toggleCoreMap()" aria-label="ForgePanel – Service Dashboard. Toggle Core Map view" aria-pressed="false" title="ForgePanel – toggle Core Map"><img class="brand-logo" src="../assets/logo.svg?v=20261102b" alt="" width="64" height="64"></button>
+      <button class="brand-btn" id="brand-btn" onclick="toggleCoreMap()" aria-label="ForgePanel – Service Dashboard. Toggle Core Map view" aria-pressed="false" title="ForgePanel – toggle Core Map"><img class="brand-logo" src="../assets/logo.svg?v=20261102c" alt="" width="64" height="64"></button>
       <span class="cm-bubble" id="cm-bubble" aria-hidden="true">Click me</span>
     </div>
   </header>
@@ -328,11 +336,11 @@
   </div>
 </div>
 
-<script src="../js/auth.js?v=20261102b"></script>
-<script src="../js/griddrag.js?v=20261102b"></script>
-<script src="../js/coremap.js?v=20261102b"></script>
-<script src="../js/yaml.js?v=20261102b"></script>
-<script src="../js/features.js?v=20261102b"></script>
+<script src="../js/auth.js?v=20261102c"></script>
+<script src="../js/griddrag.js?v=20261102c"></script>
+<script src="../js/coremap.js?v=20261102c"></script>
+<script src="../js/yaml.js?v=20261102c"></script>
+<script src="../js/features.js?v=20261102c"></script>
 <script>
 let saved = {};
 let user = "";
@@ -349,7 +357,7 @@ const services = [
   { name: "TriliumNext", desc: "Hierarchical notes and knowledge base", port: 8080, logo: "../assets/icons/trilium.png" },
   { name: "TrueNAS", desc: "Network attached storage and file shares", port: 80, logo: "../assets/icons/truenas.png" },
   { name: "Proxmox", desc: "Virtualization and container host", port: 8006, logo: "../assets/icons/proxmox.png" },
-  { name: "NPM", desc: "Reverse proxy and SSL management", port: 81, logo: GENERIC_ICON },
+  { name: "NPM", desc: "Reverse proxy and SSL management", port: 81, logo: "../assets/icons/npm.png" },
 ];
 
 let modalResolve = null;
@@ -410,8 +418,8 @@ async function persist() {
   catch (e) { if (!handleAuthError(e)) await showModal("Save Failed", e.message, "OK"); }
 }
 
-const GENERIC_ICON = "../assets/icons/generic.svg";
-// Logos for detected services: the same files the built-in tiles use. Unidentified -> generic icon.
+const UNKNOWN_ICON = "../assets/icons/unknown.svg";
+// Logos for detected services: the same files the built-in tiles use. Unidentified or no logo file -> unknown icon.
 const SCAN_ICONS = ["adguard", "filebrowser", "immich", "jellyfin", "navidrome", "nextcloud", "npm", "proxmox", "romm", "trilium", "truenas", "vaultwarden"];
 function scanIconSrc(icon) {
   const base = String(icon || "").toLowerCase().replace(/\.png$/, "");
@@ -432,7 +440,7 @@ function getAllServices() {
     name: c.name || "Custom " + (i+1),
     desc: c.desc || "Custom service",
     port: c.port || 80,
-    logo: c.logo || scanLogoFor(c) || GENERIC_ICON,
+    logo: c.logo || scanLogoFor(c) || UNKNOWN_ICON,
     custom: true,
     customIndex: i,
     key: "c:" + (c.id || (c.id = newId()))
@@ -485,22 +493,21 @@ function sections() {
 
 function cardHtml(s, i) {
   const c = cfgFor(s);
-  const logoSrc = safeImgSrc(c.logo || s.logo, GENERIC_ICON);
+  const logoSrc = safeImgSrc(c.logo || s.logo, UNKNOWN_ICON);
   const name = escapeHtml(s.name);
   return `
       <div class="card" style="animation-delay:${i * 25}ms" id="card-${i}" data-key="${escapeHtml(s.key)}" data-i="${i}">
         <div class="card-header">
-          <div class="icon" role="button" tabindex="0" aria-label="Change logo for ${name}" onclick="document.getElementById('file-${i}').click()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();document.getElementById('file-${i}').click();}" title="Change logo">
-            <img src="${escapeHtml(logoSrc)}" alt="" id="img-${i}">
+          <div class="icon" role="button" tabindex="0" aria-label="Change logo for ${name}" onclick="openIconPicker(${i})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openIconPicker(${i});}" title="Change icon">
+            <img src="${escapeHtml(logoSrc)}" alt="" id="img-${i}" onerror="this.onerror=null;this.src=UNKNOWN_ICON">
           </div>
           <span style="flex:1"></span>
           <span class="handle" title="Drag to reorder or onto a group to move it" onpointerdown="tilePointerDown(event, ${i})">&#8942;&#8942;</span>
           <div class="cmenu" id="cmenu-${i}">
             <button onclick="toggleMenu(event, ${i})" title="More" aria-label="More actions for ${name}">&#8942;</button>
-            <div class="items"><button onclick="moveToGroupMenu(${i})">Move to group…</button><button onclick="configureService(${i})">Check &amp; widget…</button></div>
+            <div class="items"><button onclick="moveToGroupMenu(${i})">Move to group…</button><button onclick="openIconPicker(${i})">Change icon…</button><button onclick="configureService(${i})">Check &amp; widget…</button></div>
           </div>
           <div class="status" id="status-${i}" role="img" aria-label="status unknown"></div>
-          <input type="file" id="file-${i}" accept="image/*" onchange="changeLogo(${i}, this)">
         </div>
         <div class="name">${s.custom ? `<input id="name-${i}" value="${name}" aria-label="Service name" placeholder="Service name" style="background:transparent; border:none; color:inherit; font-weight:600; font-size:1rem; width:100%;">` : name}</div>
         <div class="desc">${escapeHtml(s.desc)}${c.check && c.check.type && c.check.type !== "http" ? ` <span class="ctype">${escapeHtml(c.check.type)}</span>` : ""}</div>
@@ -779,7 +786,7 @@ async function addGroup() {
   groups.forEach(({ g, items }) => items.forEach(i => where.set(all[i].key, g.name || "Group")));
   const html = `<div class="desc" style="margin-bottom:0.4rem;">Services to put in this group (optional):</div>` + all.map(s => `
     <label class="pick"><input type="checkbox" class="ng-pick" value="${escapeHtml(s.key)}">
-      <img src="${escapeHtml(safeImgSrc(cfgFor(s).logo || s.logo, GENERIC_ICON))}" alt="">
+      <img src="${escapeHtml(safeImgSrc(cfgFor(s).logo || s.logo, UNKNOWN_ICON))}" alt="">
       <span>${escapeHtml(s.name)}</span>${where.has(s.key) ? `<span class="where">in ${escapeHtml(where.get(s.key))}</span>` : (s.custom ? `<span class="where">custom</span>` : "")}</label>`).join("");
   const res = await showModal("New Group", "Name the group and choose its services. You can also drag tiles into it later.", "Create", false, "Group name", "text", "", {
     html,
@@ -835,27 +842,82 @@ function sparkSvg(values, opts = {}) {
 
 function fmtPct(v) { return v == null ? "–" : (v >= 99.995 ? "100%" : v.toFixed(v >= 99 ? 2 : 1) + "%"); }
 
-async function changeLogo(i, input) {
-  const file = input.files[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = async () => {
-    const s = getAllServices()[i];
-    if (s.custom) {
-      const customs = saved._custom || [];
-      const c = customs[s.customIndex] || {};
-      c.logo = reader.result;
-      customs[s.customIndex] = c;
-      saved._custom = customs;
-    } else {
-      const c = getConfig(s.name);
-      c.logo = reader.result;
-      saved[s.name] = c;
+
+// ── icon picker: bundled logo (searchable), upload (stored server-side), image URL, or reset ──
+let bundledIcons = null;
+async function loadBundledIcons() {
+  if (bundledIcons) return bundledIcons;
+  try { bundledIcons = (await api("icons/bundled")).icons || []; } catch (e) { bundledIcons = []; }
+  return bundledIcons;
+}
+function setTileLogo(i, logo) {
+  const s = getAllServices()[i];
+  if (!s) return;
+  if (s.custom) {
+    const customs = saved._custom || [];
+    const c = customs[s.customIndex] || {};
+    if (logo) c.logo = logo; else c.logo = null;
+    customs[s.customIndex] = c;
+    saved._custom = customs;
+  } else {
+    const c = getConfig(s.name);
+    if (logo) c.logo = logo; else delete c.logo;
+    saved[s.name] = c;
+  }
+}
+function iconPickFilter(q) {
+  q = String(q || "").toLowerCase();
+  document.querySelectorAll("#ip-grid .ip-item").forEach(b => { b.hidden = q && !b.dataset.name.includes(q); });
+}
+async function openIconPicker(i) {
+  document.querySelectorAll(".cmenu.open").forEach(x => x.classList.remove("open"));
+  const s = getAllServices()[i];
+  if (!s) return;
+  const icons = await loadBundledIcons();
+  window._iconPick = null;
+  const grid = icons.map(ic => `<button type="button" class="ip-item" data-name="${escapeHtml(ic.name.toLowerCase())}" data-url="${escapeHtml(".." + ic.url)}" title="${escapeHtml(ic.name)}" onclick="document.querySelectorAll('#ip-grid .ip-item').forEach(x=>x.classList.remove('sel'));this.classList.add('sel');window._iconPick={kind:'bundled',url:this.dataset.url}"><img src="${escapeHtml(".." + ic.url)}" alt=""><span>${escapeHtml(ic.name)}</span></button>`).join("");
+  const html = `
+    <div class="iconpick">
+      <input id="ip-search" type="search" placeholder="Search bundled logos…" oninput="iconPickFilter(this.value)" aria-label="Search bundled logos">
+      <div id="ip-grid" class="ip-grid">${grid}</div>
+      <label class="ip-row">Upload image (PNG, SVG, JPG, WebP, max 256 KB)
+        <input id="ip-file" type="file" accept="image/png,image/svg+xml,image/jpeg,image/webp" onchange="window._iconPick={kind:'file'}"></label>
+      <label class="ip-row">Image URL
+        <input id="ip-url" type="url" placeholder="https://example.com/logo.png" oninput="window._iconPick=this.value.trim()?{kind:'url'}:null"></label>
+      <label class="ip-row"><input id="ip-reset" type="checkbox" onchange="window._iconPick=this.checked?{kind:'reset'}:null"> Reset to default icon</label>
+    </div>`;
+  const pick = await showModal("Change Icon", `Choose an icon for ${s.name}.`, "Apply", false, null, null, null, {
+    html,
+    collect: () => {
+      const p = window._iconPick;
+      if (!p) return null;
+      if (p.kind === "file") return { kind: "file", file: (document.getElementById("ip-file").files || [])[0] };
+      if (p.kind === "url") return { kind: "url", url: document.getElementById("ip-url").value.trim() };
+      return p;
+    },
+  });
+  if (!pick) return;
+  try {
+    if (pick.kind === "reset") setTileLogo(i, null);
+    else if (pick.kind === "bundled") setTileLogo(i, pick.url);
+    else if (pick.kind === "url") {
+      if (!/^https?:\/\/[^"'<>\s]+$/.test(pick.url)) throw new Error("Enter an http(s) image URL.");
+      setTileLogo(i, pick.url);
+    } else if (pick.kind === "file") {
+      const f = pick.file;
+      if (!f) return;
+      if (f.size > 256 * 1024) throw new Error("Image is larger than 256 KB.");
+      if (!/^image\/(png|svg\+xml|jpeg|webp)$/.test(f.type)) throw new Error("Use a PNG, SVG, JPG or WebP image.");
+      const data = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(f); });
+      const out = await api("icons", "POST", { data });
+      setTileLogo(i, out.url);
     }
-    document.getElementById(`img-${i}`).src = safeImgSrc(reader.result, GENERIC_ICON);
-    await persist();
-  };
-  reader.readAsDataURL(file);
+  } catch (e) {
+    if (!handleAuthError(e)) await showModal("Icon Not Changed", e.message || String(e), "OK");
+    return;
+  }
+  await persist();
+  render(); checkAll();
 }
 
 function readCard(i) {
@@ -1091,10 +1153,10 @@ async function applyScan(data) {
       const conf = ["high", "medium", "low"].includes(f.confidence) ? f.confidence : "low";
       const known = f.name && !/^Unknown service/.test(f.name) && f.identified_by && f.identified_by !== "unknown";
       const label = known ? scanText(f.name, 40) : "";
-      const name = known ? (off ? `${off} (${ip}:${port})` : label) : `Unknown service (${ip}:${port})`;
+      const name = known ? (off || label) : "Unknown service";
       const evid = Array.isArray(f.evidence) ? f.evidence.map(e => scanText(e, 60)).join(", ") : "";
-      const desc = known ? `Detected: ${label} (${ident}) · ${conf} confidence`
-                         : `Unidentified: ${evid || "no HTTP fingerprint"} · low confidence`;
+      const desc = known ? `${ip}:${port} · Detected: ${label} (${ident}) · ${conf} confidence`
+                         : `${ip}:${port} · Unidentified: ${evid || "no HTTP fingerprint"} · low confidence`;
       const icon = known ? scanIconSrc(f.icon) : null;
       saved._custom.push({ id: newId(), name, desc: desc.slice(0, 160), port, ip, scheme, logo: icon, source: "scan",
         icon: icon ? scanText(f.icon, 40) : null, confidence: known ? conf : "low", evidence: evid.slice(0, 200),
@@ -1222,7 +1284,7 @@ function drawNew() {
     <div class="row">
       <span class="tag new">New</span>
       <span class="grow"><b>${escapeHtml(x.name)}</b> · ${escapeHtml(x.scheme)}://${escapeHtml(x.ip)}:${escapeHtml(x.port)}
-        <span class="desc">${escapeHtml(x.identified_by && x.identified_by !== "unknown" ? `Detected: ${x.name} (${x.identified_by}) · ${x.confidence || "low"} confidence` : `Unidentified (${(x.evidence || []).join(", ")})`)}${x.match !== "custom" ? " · official tile" : ""}</span></span>
+        <span class="desc">${escapeHtml(`${x.ip}:${x.port} · `)}${escapeHtml(x.identified_by && x.identified_by !== "unknown" ? `Detected: ${x.name} (${x.identified_by}) · ${x.confidence || "low"} confidence` : `Unidentified (${(x.evidence || []).join(", ")})`)}${x.match !== "custom" ? " · official tile" : ""}</span></span>
       <button class="btn" onclick="resolvePending('accept', [${k}])">Accept</button>
       <button class="btn" onclick="resolvePending('dismiss', [${k}])">Dismiss</button>
     </div>`).join("");

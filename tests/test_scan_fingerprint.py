@@ -52,6 +52,14 @@ NET = {
     ("10.0.0.21", 9000): {("http", "/"): page("Portainer"), ("http", "/api/status"): js({"Version": "2.21", "InstanceID": "x"})},
     ("10.0.0.22", 9000): {("http", "/"): R(400, {}, "Client sent an HTTP request to an HTTPS server.")},
     ("10.0.0.30", 8080): "spa",
+    # nginx 400 on plain HTTP to a TLS port, Nextcloud behind TLS
+    ("10.0.0.27", 8443): {("http", "/"): R(400, {"Server": "nginx"}, "<html><head><title>400 The plain HTTP request was sent to HTTPS port</title></head><body>The plain HTTP request was sent to HTTPS port</body></html>"),
+                          ("https", "/"): page("Nextcloud"), ("https", "/status.php"): js({"installed": True, "versionstring": "29", "productname": "Nextcloud"})},
+    ("10.0.0.28", 8443): {("http", "/"): R(400, {}, "The plain HTTP request was sent to HTTPS port")},
+    # Jeffrey's report: 80/443 = NPM default page, 8080 = Nextcloud
+    ("10.0.0.27", 80): {("http", "/"): page("Default Site", "Congratulations! You've successfully started the Nginx Proxy Manager.")},
+    ("10.0.0.27", 443): {("https", "/"): page("Default Site", "Congratulations! You've successfully started the Nginx Proxy Manager.")},
+    ("10.0.0.27", 8080): {("http", "/"): page("Nextcloud"), ("http", "/status.php"): js({"installed": True, "versionstring": "29", "productname": "Nextcloud"})},
     ("10.0.0.31", 8443): {},  # open TCP, not HTTP
 }
 
@@ -92,8 +100,10 @@ class FingerprintTests(unittest.TestCase):
         for port in (80, 443):
             r = run("10.0.0.15", port)
             self.assertNotEqual(r["name"], "Nextcloud")
-            self.assertEqual(r["name"], "NPM")
+            self.assertEqual(r["name"], "NPM Default Site")
+            self.assertEqual(r["icon"], "npm.png")
             self.assertEqual(r["confidence"], "low")  # proxy default page only
+            self.assertNotIn("10.0.0.15", r["name"])
         self.assertEqual(run("10.0.0.15", 443)["scheme"], "https")
 
     def test_source_stack(self):
@@ -115,13 +125,41 @@ class FingerprintTests(unittest.TestCase):
 
     def test_bare_401_and_400_are_unknown(self):
         r = run("10.0.0.17", 80)
-        self.assertEqual(r["name"], "Unknown service (10.0.0.17:80)")
+        self.assertEqual(r["name"], "Unknown service")
         self.assertEqual(r["confidence"], "low")
         self.assertIsNone(r["icon"])
         self.assertTrue(any("401" in e for e in r["evidence"]))
         r = run("10.0.0.22", 9000)
-        self.assertEqual(r["name"], "Unknown service (10.0.0.22:9000)")
+        self.assertEqual(r["name"], "Unknown service")
         self.assertIn("port hint: Portainer", r["evidence"])
+
+    def test_jeffrey_host_labeled_per_port(self):
+        names = {p: run("10.0.0.27", p)["name"] for p in (80, 443, 8080)}
+        self.assertEqual(names, {80: "NPM Default Site", 443: "NPM Default Site", 8080: "Nextcloud"})
+        for p in (80, 443, 8080):
+            r = run("10.0.0.27", p)
+            self.assertNotIn("10.0.0.27", r["name"])
+            self.assertEqual(r["where"], f"10.0.0.27:{p}")
+            self.assertTrue(all(c[0] in ("http", "https") for c in r["_calls"]))
+
+    def test_plain_http_to_https_port_retries_tls(self):
+        r = run("10.0.0.27", 8443)
+        self.assertEqual(r["name"], "Nextcloud")
+        self.assertEqual(r["scheme"], "https")
+        self.assertIn(("https", "/"), r["_calls"])
+        r = run("10.0.0.28", 8443)  # TLS retry fails -> unknown, not labeled from the 400 page
+        self.assertEqual(r["name"], "Unknown service")
+        self.assertIsNone(r["icon"])
+
+    def test_no_cross_port_naming(self):
+        # fingerprint() only ever talks to the host:port it was given
+        seen = []
+        def get(scheme, path):
+            seen.append(path)
+            return page("Default Site", "Congratulations! You've successfully started the Nginx Proxy Manager.") if scheme == "http" else None
+        r = sc.fingerprint("10.0.0.27", 80, CONF, get=get)
+        self.assertEqual(r["name"], "NPM Default Site")
+        self.assertNotEqual(r["name"], "Nextcloud")
 
     def test_portainer_gets_no_npm_icon(self):
         r = self.check("10.0.0.21", 9000, "Portainer", None, ev=["title", "/api/status"])

@@ -15,7 +15,7 @@ Every open host:port is identified from **its own** HTTP(S) responses; nothing i
 3. Known API/health endpoints whose **content** is validated (an SPA that answers 200 to every path does not count): Jellyfin `/System/Info/Public`, Immich `/api/server/ping`, Nextcloud `/status.php`, Navidrome `/app/`, AdGuard `/control/status` or `/login.html`, Vaultwarden `/alive` / `/api/alive`, Trilium and FileBrowser `/login`, RomM `/api/heartbeat`, NPM `/api/`, Portainer `/api/status`, Pi-hole `/admin/`, ForgePanel `/api/health`, Grafana, Home Assistant, Plex.
 4. Favicon md5 (optional, `[favicon_hashes]` in `scan.conf`).
 
-Ports in `[ports]` are only weak hints (they decide which endpoints are tried first). A bare 400/401/403, or a page with no evidence, becomes `Unknown service (host:port)` with low confidence and a neutral icon.
+Ports in `[ports]` are only weak hints (they decide which endpoints are tried first). A bare 400/401/403, or a page with no evidence, becomes `Unknown service` (the host:port goes in the tile description, not the name) with low confidence and the unknown icon. A 400 "plain HTTP request was sent to HTTPS port" is retried over HTTPS, never labeled. NPM's catch-all "Default Site" page on 80/443 is labeled `NPM Default Site`, never the app behind another port.
 
 Each result carries `name`, `icon` (the same logo file as the built-in tile, or null), `confidence` (`high` = two pieces of evidence or a validated endpoint, `medium` = one title/header/cookie, `low` = page text only or unknown), `evidence` and `identified_by` (e.g. `title + /api/server/ping`). The dashboard shows it on the tile: *Detected: Immich (title + /api/server/ping)*.
 
