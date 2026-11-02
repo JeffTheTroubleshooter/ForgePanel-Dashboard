@@ -250,7 +250,7 @@ async function fxImportYaml(text) {
   let doc;
   try { doc = FPYaml.parse(text); } catch (e) { await showModal("Import Failed", "Could not read the YAML: " + e.message, "OK"); return; }
   if (!doc || doc.format !== "forgepanel-yaml") { await showModal("Import Failed", "That YAML is not a ForgePanel export (format: forgepanel-yaml).", "OK"); return; }
-  const ok = await showModal("Import YAML", `Merge ${Object.keys(doc.services || {}).length} configured service(s) and ${(doc.custom || []).length} custom tile(s) into the dashboard? Matching tiles are updated; the group layout is replaced.`, "Import");
+  const ok = await showModal("Import YAML (Experimental)", `Experimental: may not work with every setup yet. Merge ${Object.keys(doc.services || {}).length} configured service(s) and ${(doc.custom || []).length} custom tile(s) into the dashboard? Matching tiles are updated; the group layout is replaced.`, "Import");
   if (!ok) return;
   const pick = o => { const r = {}; ["ip", "port", "scheme", "desc", "logo", "check", "widget", "source"].forEach(k => { if (o && o[k] != null) r[k] = o[k]; }); if (r.logo) r.logo = safeImgSrc(r.logo, null); return r; };
   for (const [name, c] of Object.entries(doc.services || {})) saved[name] = Object.assign(saved[name] || { logo: null }, pick(c));

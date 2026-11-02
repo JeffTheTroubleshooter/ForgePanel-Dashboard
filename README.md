@@ -182,7 +182,9 @@ Optional, per tile (**⋮ → Check & widget…**). Each widget shows one line o
 
 ![Public status page](screenshots/status-page.png)
 
-## YAML Export / Import
+## YAML Export / Import (Experimental)
+
+> **Experimental:** not fully tested yet; keep a .conf backup too.
 
 **Export** asks for a format: the existing encrypted backup (`.conf`), or **YAML** (`forgepanel.yaml`). YAML is readable and editable, and contains configured services, custom tiles, check and widget settings, and groups. It leaves out secrets (widget keys, push tokens, notification settings) and uploaded (data-URL) logos. **Import** accepts `.yaml`/`.yml` and merges: matching tiles are updated, new ones are added, and the group layout is replaced. YAML is produced and parsed in the browser by a small built-in parser (`js/yaml.js`), so PyYAML is not needed.
 
