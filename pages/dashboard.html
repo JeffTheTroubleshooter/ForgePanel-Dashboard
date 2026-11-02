@@ -6,9 +6,9 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <title>ForgePanel</title>
-<link rel="icon" type="image/png" sizes="32x32" href="../assets/favicon-32.png?v=20261102f">
-<link rel="icon" type="image/png" sizes="192x192" href="../assets/favicon-192.png?v=20261102f">
-<link rel="apple-touch-icon" href="../assets/favicon-192.png?v=20261102f">
+<link rel="icon" type="image/png" sizes="32x32" href="../assets/favicon-32.png?v=20261102g">
+<link rel="icon" type="image/png" sizes="192x192" href="../assets/favicon-192.png?v=20261102g">
+<link rel="apple-touch-icon" href="../assets/favicon-192.png?v=20261102g">
 <style>
   :root {
     --bg: #0a0a0a;
@@ -187,6 +187,9 @@
   .cmenu.open .items { display:block; }
   .cmenu .items button { display:block; width:100%; text-align:left; background:transparent; border:none; color:var(--text); padding:0.45rem 0.6rem; font-size:0.8rem; border-radius:6px; cursor:pointer; }
   .cmenu .items button:hover { background:#222; }
+  #modal input.invalid { border-color: var(--red); }
+  #modal-error { color: var(--red); font-size: 0.8rem; text-align:left; margin:-0.6rem 0 0.9rem; }
+  #modal-error:empty { display:none; }
   #modal-extra { text-align:left; max-height:45vh; overflow:auto; margin-bottom:1rem; }
   #modal-extra:empty { display:none; }
   #modal #modal-extra input { display:inline-block; width:auto; margin:0; accent-color:var(--cyan); }
@@ -254,7 +257,7 @@
   .brand-logo { width:64px; height:64px; display:block; }
   .cm-bubble { position:absolute; left:calc(100% + 12px); top:50%; transform:translateY(-50%); white-space:nowrap; background:#141414; border:1px solid #2a2a2a; border-left:2px solid #ff2a2a; color:#e5e5e5; font-size:12px; padding:5px 10px; border-radius:10px; pointer-events:none; }
 </style>
-<link rel="stylesheet" href="../css/main.css?v=20261102f">
+<link rel="stylesheet" href="../css/main.css?v=20261102g">
 </head>
 <body>
 <iframe id="bg" src="dots.html"></iframe>
@@ -263,7 +266,7 @@
   <header>
     <h1 class="sr-only">ForgePanel – Service Dashboard</h1>
     <div class="brand-wrap">
-      <button class="brand-btn" id="brand-btn" onclick="toggleCoreMap()" aria-label="ForgePanel – Service Dashboard. Toggle Core Map view" aria-pressed="false" title="ForgePanel – toggle Core Map"><img class="brand-logo" src="../assets/logo.svg?v=20261102f" alt="" width="64" height="64"></button>
+      <button class="brand-btn" id="brand-btn" onclick="toggleCoreMap()" aria-label="ForgePanel – Service Dashboard. Toggle Core Map view" aria-pressed="false" title="ForgePanel – toggle Core Map"><img class="brand-logo" src="../assets/logo.svg?v=20261102g" alt="" width="64" height="64"></button>
       <span class="cm-bubble" id="cm-bubble" aria-hidden="true">Click me</span>
     </div>
   </header>
@@ -327,7 +330,8 @@
   <div class="box">
     <h3 id="modal-title">Confirm</h3>
     <p id="modal-msg"></p>
-    <input id="modal-input" type="password" autocomplete="current-password">
+    <input id="modal-input" type="password" autocomplete="current-password" aria-describedby="modal-error">
+    <div id="modal-error" role="alert"></div>
     <div id="modal-extra"></div>
     <div class="btns">
       <button id="modal-cancel">Cancel</button>
@@ -336,11 +340,11 @@
   </div>
 </div>
 
-<script src="../js/auth.js?v=20261102f"></script>
-<script src="../js/griddrag.js?v=20261102f"></script>
-<script src="../js/coremap.js?v=20261102f"></script>
-<script src="../js/yaml.js?v=20261102f"></script>
-<script src="../js/features.js?v=20261102f"></script>
+<script src="../js/auth.js?v=20261102g"></script>
+<script src="../js/griddrag.js?v=20261102g"></script>
+<script src="../js/coremap.js?v=20261102g"></script>
+<script src="../js/yaml.js?v=20261102g"></script>
+<script src="../js/features.js?v=20261102g"></script>
 <script>
 let saved = {};
 let user = "";
@@ -362,12 +366,21 @@ const services = [
 
 let modalResolve = null;
 let modalCollect = null;
+let modalRequired = null;
+function setModalError(msg) {
+  const inp = document.getElementById("modal-input");
+  document.getElementById("modal-error").textContent = msg || "";
+  inp.classList.toggle("invalid", !!msg);
+  inp.setAttribute("aria-invalid", msg ? "true" : "false");
+}
 function showModal(title, msg, okText, danger, askPassword, inputType, initial, extra) {
   extra = extra || {};
   return new Promise(resolve => {
     document.getElementById("modal-extra").innerHTML = extra.html || "";  // callers pass escaped HTML only
     document.getElementById("modal-cancel").textContent = extra.cancelText || "Cancel";
     modalCollect = extra.collect || null;
+    modalRequired = extra.required || null;
+    setModalError("");
     document.getElementById("modal-title").textContent = title;
     document.getElementById("modal-msg").textContent = msg;
     const inp = document.getElementById("modal-input");
@@ -384,6 +397,12 @@ function showModal(title, msg, okText, danger, askPassword, inputType, initial, 
   });
 }
 function closeModal(ok) {
+  if (ok && modalRequired) {
+    const inp0 = document.getElementById("modal-input");
+    if (inp0.style.display === "block" && !inp0.value.trim()) { setModalError(modalRequired); inp0.focus(); return; }
+  }
+  modalRequired = null;
+  setModalError("");
   document.getElementById("modal").classList.remove("show");
   const inp = document.getElementById("modal-input");
   let val = inp.style.display === "block" ? (ok ? inp.value : null) : ok;
@@ -396,9 +415,10 @@ function closeModal(ok) {
 }
 document.getElementById("modal-ok").onclick = () => closeModal(true);
 document.getElementById("modal-cancel").onclick = () => closeModal(false);
+document.getElementById("modal-input").addEventListener("input", () => setModalError(""));
 document.getElementById("modal-input").addEventListener("keydown", e => { if (e.key === "Enter") closeModal(true); });
 const askPassword = (title, msg) => showModal(title, msg, "OK", false, "Password");
-const askText = (title, msg, placeholder, initial) => showModal(title, msg, "OK", false, placeholder, "text", initial);
+const askText = (title, msg, placeholder, initial, extra) => showModal(title, msg, "OK", false, placeholder, "text", initial, extra);
 
 function handleAuthError(e) {
   if (e && (e.status === 401 || (e.status === 403 && e.data && e.data.mustChange))) { location.href = "login.html"; return true; }
@@ -790,6 +810,7 @@ async function addGroup() {
       <span>${escapeHtml(s.name)}</span>${where.has(s.key) ? `<span class="where">in ${escapeHtml(where.get(s.key))}</span>` : (s.custom ? `<span class="where">custom</span>` : "")}</label>`).join("");
   const res = await showModal("New Group", "Name the group and choose its services. You can also drag tiles into it later.", "Create", false, "Group name", "text", "", {
     html,
+    required: "Please enter a group name.",
     collect: name => ({ name, keys: [...document.querySelectorAll(".ng-pick:checked")].map(c => c.value) }),
   });
   if (!res || !res.name || !res.name.trim()) return;
@@ -801,7 +822,7 @@ async function addGroup() {
 async function renameGroup(gid) {
   const g = layout().groups.find(x => x.id === gid);
   if (!g) return;
-  const name = await askText("Rename Group", "New name for this group.", "Group name", g.name);
+  const name = await askText("Rename Group", "New name for this group.", "Group name", g.name, { required: "Please enter a group name." });
   if (!name || !name.trim()) return;
   g.name = name.trim().slice(0, 60);
   await persist(); render(); checkAll();
