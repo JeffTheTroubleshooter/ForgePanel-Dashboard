@@ -6,9 +6,9 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <title>ForgePanel</title>
-<link rel="icon" type="image/png" sizes="32x32" href="../assets/favicon-32.png?v=20261031g">
-<link rel="icon" type="image/png" sizes="192x192" href="../assets/favicon-192.png?v=20261031g">
-<link rel="apple-touch-icon" href="../assets/favicon-192.png?v=20261031g">
+<link rel="icon" type="image/png" sizes="32x32" href="../assets/favicon-32.png?v=20261102a">
+<link rel="icon" type="image/png" sizes="192x192" href="../assets/favicon-192.png?v=20261102a">
+<link rel="apple-touch-icon" href="../assets/favicon-192.png?v=20261102a">
 <style>
   :root {
     --bg: #0a0a0a;
@@ -246,7 +246,7 @@
   .brand-logo { width:64px; height:64px; display:block; }
   .cm-bubble { position:absolute; left:calc(100% + 12px); top:50%; transform:translateY(-50%); white-space:nowrap; background:#141414; border:1px solid #2a2a2a; border-left:2px solid #ff2a2a; color:#e5e5e5; font-size:12px; padding:5px 10px; border-radius:10px; pointer-events:none; }
 </style>
-<link rel="stylesheet" href="../css/main.css?v=20261031g">
+<link rel="stylesheet" href="../css/main.css?v=20261102a">
 </head>
 <body>
 <iframe id="bg" src="dots.html"></iframe>
@@ -255,7 +255,7 @@
   <header>
     <h1 class="sr-only">ForgePanel – Service Dashboard</h1>
     <div class="brand-wrap">
-      <button class="brand-btn" id="brand-btn" onclick="toggleCoreMap()" aria-label="ForgePanel – Service Dashboard. Toggle Core Map view" aria-pressed="false" title="ForgePanel – toggle Core Map"><img class="brand-logo" src="../assets/logo.svg?v=20261031g" alt="" width="64" height="64"></button>
+      <button class="brand-btn" id="brand-btn" onclick="toggleCoreMap()" aria-label="ForgePanel – Service Dashboard. Toggle Core Map view" aria-pressed="false" title="ForgePanel – toggle Core Map"><img class="brand-logo" src="../assets/logo.svg?v=20261102a" alt="" width="64" height="64"></button>
       <span class="cm-bubble" id="cm-bubble" aria-hidden="true">Click me</span>
     </div>
   </header>
@@ -328,11 +328,11 @@
   </div>
 </div>
 
-<script src="../js/auth.js?v=20261031g"></script>
-<script src="../js/griddrag.js?v=20261031g"></script>
-<script src="../js/coremap.js?v=20261031g"></script>
-<script src="../js/yaml.js?v=20261031g"></script>
-<script src="../js/features.js?v=20261031g"></script>
+<script src="../js/auth.js?v=20261102a"></script>
+<script src="../js/griddrag.js?v=20261102a"></script>
+<script src="../js/coremap.js?v=20261102a"></script>
+<script src="../js/yaml.js?v=20261102a"></script>
+<script src="../js/features.js?v=20261102a"></script>
 <script>
 let saved = {};
 let user = "";
@@ -349,7 +349,7 @@ const services = [
   { name: "TriliumNext", desc: "Hierarchical notes and knowledge base", port: 8080, logo: "../assets/icons/trilium.png" },
   { name: "TrueNAS", desc: "Network attached storage and file shares", port: 80, logo: "../assets/icons/truenas.png" },
   { name: "Proxmox", desc: "Virtualization and container host", port: 8006, logo: "../assets/icons/proxmox.png" },
-  { name: "NPM", desc: "Reverse proxy and SSL management", port: 81, logo: "../assets/icons/npm.png" },
+  { name: "NPM", desc: "Reverse proxy and SSL management", port: 81, logo: GENERIC_ICON },
 ];
 
 let modalResolve = null;
@@ -410,13 +410,29 @@ async function persist() {
   catch (e) { if (!handleAuthError(e)) await showModal("Save Failed", e.message, "OK"); }
 }
 
+const GENERIC_ICON = "../assets/icons/generic.svg";
+// Logos for detected services: the same files the built-in tiles use. Unidentified -> generic icon.
+const SCAN_ICONS = ["adguard", "filebrowser", "immich", "jellyfin", "navidrome", "nextcloud", "npm", "proxmox", "romm", "trilium", "truenas", "vaultwarden"];
+function scanIconSrc(icon) {
+  const base = String(icon || "").toLowerCase().replace(/\.png$/, "");
+  return SCAN_ICONS.includes(base) ? `../assets/icons/${base}.png` : null;
+}
+function scanLogoFor(c) {
+  if (!c || c.source !== "scan") return null;
+  if (c.icon) return scanIconSrc(c.icon);
+  if (c.confidence === "low" || /^Unknown service/.test(c.name || "")) return null;
+  const base = String(c.name || "").replace(/ \(.*$/, "");
+  const off = services.find(s => s.name === base);
+  return off ? off.logo : null;
+}
+
 function getAllServices() {
   const customs = saved._custom || [];
   return services.map(s => ({ ...s, key: "o:" + s.name })).concat(customs.map((c, i) => ({
     name: c.name || "Custom " + (i+1),
     desc: c.desc || "Custom service",
     port: c.port || 80,
-    logo: c.logo || "../assets/icons/npm.png",
+    logo: c.logo || scanLogoFor(c) || GENERIC_ICON,
     custom: true,
     customIndex: i,
     key: "c:" + (c.id || (c.id = newId()))
@@ -469,7 +485,7 @@ function sections() {
 
 function cardHtml(s, i) {
   const c = cfgFor(s);
-  const logoSrc = safeImgSrc(c.logo || s.logo, "../assets/icons/npm.png");
+  const logoSrc = safeImgSrc(c.logo || s.logo, GENERIC_ICON);
   const name = escapeHtml(s.name);
   return `
       <div class="card" style="animation-delay:${i * 25}ms" id="card-${i}" data-key="${escapeHtml(s.key)}" data-i="${i}">
@@ -763,7 +779,7 @@ async function addGroup() {
   groups.forEach(({ g, items }) => items.forEach(i => where.set(all[i].key, g.name || "Group")));
   const html = `<div class="desc" style="margin-bottom:0.4rem;">Services to put in this group (optional):</div>` + all.map(s => `
     <label class="pick"><input type="checkbox" class="ng-pick" value="${escapeHtml(s.key)}">
-      <img src="${escapeHtml(safeImgSrc(cfgFor(s).logo || s.logo, "../assets/icons/npm.png"))}" alt="">
+      <img src="${escapeHtml(safeImgSrc(cfgFor(s).logo || s.logo, GENERIC_ICON))}" alt="">
       <span>${escapeHtml(s.name)}</span>${where.has(s.key) ? `<span class="where">in ${escapeHtml(where.get(s.key))}</span>` : (s.custom ? `<span class="where">custom</span>` : "")}</label>`).join("");
   const res = await showModal("New Group", "Name the group and choose its services. You can also drag tiles into it later.", "Create", false, "Group name", "text", "", {
     html,
@@ -836,7 +852,7 @@ async function changeLogo(i, input) {
       c.logo = reader.result;
       saved[s.name] = c;
     }
-    document.getElementById(`img-${i}`).src = safeImgSrc(reader.result, "../assets/icons/npm.png");
+    document.getElementById(`img-${i}`).src = safeImgSrc(reader.result, GENERIC_ICON);
     await persist();
   };
   reader.readAsDataURL(file);
@@ -1066,15 +1082,23 @@ async function applyScan(data) {
     const key = `${ip}:${port}`;
     if (taken.has(key)) { skipped++; continue; }
     const scheme = f.scheme === "https" ? "https" : "http";
-    const off = officialNames.find(n => n === f.match);
+    const off = f.confidence === "low" ? null : officialNames.find(n => n === f.match);
     if (off && !(saved[off] && saved[off].ip)) {
       saved[off] = { ...getConfig(off), ip, port, scheme };
       addedOfficial++;
     } else {
-      const name = off ? `${off} (${ip})` : scanText(f.name || `Service :${port}`, 60);
-      const desc = f.title ? `Found by scan: ${scanText(f.title, 80)}` : "Found by network scan";
-      saved._custom.push({ id: newId(), name, desc, port, ip, scheme, logo: null, source: "scan",
-        found_at: scanText(foundAt, 40) || null, matched_by: scanText(f.identified_by, 20) || null });
+      const ident = scanText(f.identified_by, 120);
+      const conf = ["high", "medium", "low"].includes(f.confidence) ? f.confidence : "low";
+      const known = f.name && !/^Unknown service/.test(f.name) && f.identified_by && f.identified_by !== "unknown";
+      const label = known ? scanText(f.name, 40) : "";
+      const name = known ? (off ? `${off} (${ip}:${port})` : label) : `Unknown service (${ip}:${port})`;
+      const evid = Array.isArray(f.evidence) ? f.evidence.map(e => scanText(e, 60)).join(", ") : "";
+      const desc = known ? `Detected: ${label} (${ident}) · ${conf} confidence`
+                         : `Unidentified: ${evid || "no HTTP fingerprint"} · low confidence`;
+      const icon = known ? scanIconSrc(f.icon) : null;
+      saved._custom.push({ id: newId(), name, desc: desc.slice(0, 160), port, ip, scheme, logo: icon, source: "scan",
+        icon: icon ? scanText(f.icon, 40) : null, confidence: known ? conf : "low", evidence: evid.slice(0, 200),
+        found_at: scanText(foundAt, 40) || null, matched_by: ident || null });
       addedCustom++;
     }
     taken.add(key);
@@ -1198,7 +1222,7 @@ function drawNew() {
     <div class="row">
       <span class="tag new">New</span>
       <span class="grow"><b>${escapeHtml(x.name)}</b> · ${escapeHtml(x.scheme)}://${escapeHtml(x.ip)}:${escapeHtml(x.port)}
-        <span class="desc">${escapeHtml(x.title || "")}${x.match !== "custom" ? " · official tile" : ""}</span></span>
+        <span class="desc">${escapeHtml(x.identified_by && x.identified_by !== "unknown" ? `Detected: ${x.name} (${x.identified_by}) · ${x.confidence || "low"} confidence` : `Unidentified (${(x.evidence || []).join(", ")})`)}${x.match !== "custom" ? " · official tile" : ""}</span></span>
       <button class="btn" onclick="resolvePending('accept', [${k}])">Accept</button>
       <button class="btn" onclick="resolvePending('dismiss', [${k}])">Dismiss</button>
     </div>`).join("");

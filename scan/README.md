@@ -3,8 +3,21 @@
 `scan.py` finds self-hosted services on your local network so the dashboard can add them for you.
 
 - Pure Python 3 standard library for scanning (no pip needed).
-- Concurrent TCP connect scan of the ports in `scan.conf`, plus an optional HTTP `<title>` / `Server` grab to identify the service.
+- Concurrent TCP connect scan of the ports in `scan.conf`, then per-**host:port** fingerprinting (see below).
 - Each result gets a `match`: the name of an official dashboard tile, or `custom`.
+
+## How services are identified
+
+Every open host:port is identified from **its own** HTTP(S) responses; nothing is copied from another port on the same host. HTTPS is tried first on TLS ports (443, 8006, 9443, `*443`), same-host redirects are followed. Evidence, by priority:
+
+1. Page `<title>` (e.g. `Immich`, `pve - Proxmox Virtual Environment`).
+2. Specific headers and cookie names (`Server: pve-api-daemon`, `X-Powered-By`, `trilium.sid`, `oc_sessionPassphrase`, `PVEAuthCookie`, ...).
+3. Known API/health endpoints whose **content** is validated (an SPA that answers 200 to every path does not count): Jellyfin `/System/Info/Public`, Immich `/api/server/ping`, Nextcloud `/status.php`, Navidrome `/app/`, AdGuard `/control/status` or `/login.html`, Vaultwarden `/alive` / `/api/alive`, Trilium and FileBrowser `/login`, RomM `/api/heartbeat`, NPM `/api/`, Portainer `/api/status`, Pi-hole `/admin/`, ForgePanel `/api/health`, Grafana, Home Assistant, Plex.
+4. Favicon md5 (optional, `[favicon_hashes]` in `scan.conf`).
+
+Ports in `[ports]` are only weak hints (they decide which endpoints are tried first). A bare 400/401/403, or a page with no evidence, becomes `Unknown service (host:port)` with low confidence and a neutral icon.
+
+Each result carries `name`, `icon` (the same logo file as the built-in tile, or null), `confidence` (`high` = two pieces of evidence or a validated endpoint, `medium` = one title/header/cookie, `low` = page text only or unknown), `evidence` and `identified_by` (e.g. `title + /api/server/ping`). The dashboard shows it on the tile: *Detected: Immich (title + /api/server/ping)*.
 
 ## Usage
 
@@ -38,8 +51,9 @@ Decryption happens on the server, so this works over plain `http://<ip>` too. `s
 | `timeout`, `threads` | per-connect timeout (s) and concurrency |
 | `http_probe` | grab HTTP title/Server header |
 | `output`, `plain_output` | output file names (relative to `scan/`) |
-| `[ports]` | `port = candidate names`, most likely first |
-| `[fingerprints]` | text in title/Server -> service name |
+| `[ports]` | `port = candidate names` (weak hints only) |
+| `[fingerprints]` | legacy title keywords (not used for detection) |
+| `[favicon_hashes]` | optional `md5 = service name` |
 | `[official]` | tile names in `pages/dashboard.html` |
 
 Only scan networks you own or are allowed to scan.

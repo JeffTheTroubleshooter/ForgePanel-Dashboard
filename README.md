@@ -96,7 +96,7 @@ ForgePanel-Dashboard/
 
 ## Network Scan
 
-Click **Scan Network** in the dashboard toolbar. The server runs `scan/scan.py` (Python standard library), which TCP-scans your LAN for well-known self-hosted ports (Jellyfin, Immich, Nextcloud, Proxmox, Portainer, Home Assistant, Plex, Grafana and more, set in `scan/scan.conf`) and identifies services by HTTP title or Server header. Results are stored (encrypted) in the database; found official services fill their tiles, everything else is added as a custom service, and IP:port duplicates are skipped.
+Click **Scan Network** in the dashboard toolbar. The server runs `scan/scan.py` (Python standard library), which TCP-scans your LAN for well-known self-hosted ports (Jellyfin, Immich, Nextcloud, Proxmox, Portainer, Home Assistant, Plex, Grafana and more, set in `scan/scan.conf`) and identifies each host:port from its own responses (page title, headers/cookies, validated API/health endpoints, optional favicon hash; ports are only hints). Detected services get the program's logo and a description with the evidence; unidentified ones are shown as *Unknown service (host:port)* with a neutral icon. Results are stored (encrypted) in the database; found official services fill their tiles, everything else is added as a custom service, and IP:port duplicates are skipped.
 
 The CLI still works and writes `scan/results.enc` (encrypted with a password you type) for **Import Scan**:
 

@@ -334,6 +334,7 @@ def custom_file_record(c):
         "generated_by": GEN_MARK, "name": name, "host": host, "port": port, "scheme": scheme,
         "url": f"{scheme}://{host}{'' if default else ':' + str(port)}",
         "source": "scan", "found_at": c.get("found_at"), "matched_by": c.get("matched_by"),
+        "confidence": c.get("confidence") if c.get("confidence") in ("high", "medium", "low") else None,
     }
 
 def sync_custom_files(customs, folder=None):
@@ -881,9 +882,9 @@ def run_scan_job(subnet, source="server", flag=False, cancel=None):
     try:
         sc = load_scanner()
         # Cancel support: queued port/HTTP checks return immediately once cancel is set.
-        _po, _hp = sc.port_open, sc.http_probe
+        _po, _hf = sc.port_open, sc.fetch
         sc.port_open = lambda *a, **k: False if cancel.is_set() else _po(*a, **k)
-        sc.http_probe = lambda *a, **k: (None, "", "") if cancel.is_set() else _hp(*a, **k)
+        sc.fetch = lambda *a, **k: None if cancel.is_set() else _hf(*a, **k)
         conf = sc.load_conf(os.path.join(ROOT, "scan", "scan.conf"))
         try:
             spec, hosts = sc.resolve_hosts(subnet or conf["subnet"], conf["max_hosts"])
