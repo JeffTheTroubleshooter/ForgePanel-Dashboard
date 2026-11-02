@@ -190,7 +190,7 @@ Hover a tile **or its line** to see the last response time. When a check goes fr
 
 ## HTTPS
 
-Start with `--https` (or answer *yes* in the installer). On first start the server runs `openssl` to make a self-signed certificate in `database/certs/` (key is 0600, never served, never committed). Use `--cert` / `--key` to use your own certificate instead. The session cookie gets the `Secure` flag.
+Start with `--https`. The installer enables HTTPS by default (pass `--http` or set `FORGEPANEL_HTTPS=0` for plain HTTP): it installs openssl if needed and creates a self-signed RSA 2048 certificate valid 825 days (SAN = container IPs, hostname, localhost) in `<install dir>/database/certs/` (outside git, key 0600, owned by the service user, kept on reinstall). Your browser warns once about the self-signed certificate; for no warning at all, put ForgePanel behind Nginx Proxy Manager with a real certificate. On first start the server runs `openssl` to make a self-signed certificate in `database/certs/` (key is 0600, never served, never committed). Use `--cert` / `--key` to use your own certificate instead. The session cookie gets the `Secure` flag.
 
 Your browser will warn because the certificate is self-signed. Either accept the warning once, or trust it: copy `database/certs/server.crt` to your computer and import it — Windows: *certmgr.msc → Trusted Root Certification Authorities*; macOS: Keychain Access → System → set *Always Trust*; Linux: copy to `/usr/local/share/ca-certificates/forgepanel.crt` and run `sudo update-ca-certificates`; Firefox: *Settings → Certificates → Authorities → Import*. If the server's IP or hostname changes, delete `database/certs/` and restart to make a new one.
 
@@ -234,11 +234,12 @@ Older versions kept data in the browser. Before upgrading, open the old dashboar
 
 ## Automatic Install (with service)
 
-`forgepanel-install.sh` installs ForgePanel and sets it up as a service that starts on boot. It works on Debian/Ubuntu, Fedora/RHEL, Arch, openSUSE and Alpine. It installs python3 (with sqlite3), git, curl and python3-cryptography and openssl, checks that `import sqlite3` / `import cryptography` work, clones or updates the repo (default `/opt/forgepanel`), creates `database/` (0700), asks which port to use (default `8084`), whether to enable HTTPS (adds `--https`) and whether the server sits behind a reverse proxy (adds `--trusted-proxy <CIDR>`), opens that port in ufw/firewalld if active, creates a `forgepanel` systemd service (OpenRC on Alpine) running `python3 server.py --port <port> --host 0.0.0.0`, and finally checks `GET /api/health` to confirm it came up. Running it again on an existing install pulls the latest code and restarts the service.
+`forgepanel-install.sh` installs ForgePanel and sets it up as a service that starts on boot. It works on Debian/Ubuntu, Fedora/RHEL, Arch, openSUSE and Alpine. It installs python3 (with sqlite3), git, curl and python3-cryptography and openssl, checks that `import sqlite3` / `import cryptography` work, clones or updates the repo (default `/opt/forgepanel`), creates `database/` (0700), asks which port to use (default `8084`), enables HTTPS with a self-signed certificate by default (`--http` / `FORGEPANEL_HTTPS=0` to opt out) and whether the server sits behind a reverse proxy (adds `--trusted-proxy <CIDR>`), opens that port in ufw/firewalld if active, creates a `forgepanel` systemd service (OpenRC on Alpine) running `python3 server.py --port <port> --host 0.0.0.0`, and finally checks `GET /api/health` and `POST /api/login` (over https with `curl -k`) to confirm it came up. Open `https://<ip>:8084`. Running it again on an existing install pulls the latest code and restarts the service.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/JeffTheTroubleshooter/ForgePanel-Dashboard/main/forgepanel-install.sh -o forgepanel-install.sh
-bash forgepanel-install.sh
+bash forgepanel-install.sh            # HTTPS (default)
+# bash forgepanel-install.sh --http   # plain HTTP
 ```
 
 Then open `http://<your-server-ip>:8084`. To manage the service:

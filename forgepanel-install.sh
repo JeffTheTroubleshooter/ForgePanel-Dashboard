@@ -10,7 +10,8 @@
 # never 404) to confirm the backend, not a static file server, is answering.
 #
 # Usage:
-#   bash forgepanel-install.sh            # install
+#   bash forgepanel-install.sh            # install (HTTPS, self-signed cert)
+#   bash forgepanel-install.sh --http     # install with plain HTTP (or FORGEPANEL_HTTPS=0)
 #   bash forgepanel-install.sh uninstall  # remove service, optionally database/, dir, packages
 #
 
@@ -22,6 +23,11 @@ DEFAULT_PORT=8084
 DEFAULT_DIR="/opt/forgepanel"
 SERVICE_NAME="forgepanel"
 PYTHON=""
+# HTTPS is the default; --http or FORGEPANEL_HTTPS=0 keeps plain HTTP
+USE_HTTPS=1
+case "${FORGEPANEL_HTTPS:-1}" in 0|no|false|off) USE_HTTPS=0 ;; esac
+HTTPS_FLAG=""
+CERT_DIR=""
 # run as root without sudo (e.g. a fresh LXC/Alpine container)
 if [[ $(id -u) -eq 0 ]] && ! command -v sudo >/dev/null 2>&1; then
   sudo() { "$@"; }
@@ -122,8 +128,12 @@ ask_user() {
   prompt PORT "Port to listen on" "$DEFAULT_PORT"
 
   HTTPS_FLAG=""
-  if ask_yn "Serve over HTTPS with a self-signed certificate (database/certs/)?"; then
-    HTTPS_FLAG=" --https"
+  if (( USE_HTTPS )); then
+    CERT_DIR="$INSTALL_DIR/database/certs"
+    HTTPS_FLAG=" --https --cert $CERT_DIR/server.crt --key $CERT_DIR/server.key"
+    info "HTTPS enabled (self-signed cert in $CERT_DIR). Use --http or FORGEPANEL_HTTPS=0 for plain HTTP."
+  else
+    info "Plain HTTP selected (--http / FORGEPANEL_HTTPS=0)."
   fi
 
   PROXY_FLAGS=""
@@ -160,6 +170,35 @@ setup_files() {
     ok "Existing database kept: $INSTALL_DIR/database/forgepanel.db"
   fi
   ok "Files ready (database: $INSTALL_DIR/database, mode 0700, owner $SVC_USER)."
+}
+
+# ── self-signed certificate (outside git, kept on reinstall) ───────────────
+setup_cert() {
+  (( USE_HTTPS )) || return 0
+  local crt="$CERT_DIR/server.crt" key="$CERT_DIR/server.key"
+  sudo mkdir -p "$CERT_DIR"
+  if sudo test -s "$crt" && sudo test -s "$key"; then
+    ok "Existing certificate kept: $crt"
+  else
+    command -v openssl >/dev/null 2>&1 || pkg_install openssl || true
+    command -v openssl >/dev/null 2>&1 || die "openssl is required for HTTPS. Install it, or re-run with --http."
+    local host san ip
+    host=$(hostname 2>/dev/null || echo forgepanel)
+    san="DNS:$host,DNS:localhost,IP:127.0.0.1"
+    for ip in $(hostname -I 2>/dev/null); do
+      [[ "$ip" == "127.0.0.1" ]] && continue
+      san+=",IP:$ip"
+    done
+    info "Generating self-signed certificate (RSA 2048, 825 days, SAN $san) ..."
+    sudo sh -c 'umask 077; exec "$@"' sh openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 825 \
+      -keyout "$key" -out "$crt" -subj "/CN=$host" -addext "subjectAltName=$san" >/dev/null 2>&1 \
+      || die "openssl could not create the certificate (needs OpenSSL 1.1.1+ for -addext)."
+    ok "Certificate created: $crt"
+  fi
+  sudo chown -R "$SVC_USER:$SVC_GROUP" "$CERT_DIR"
+  sudo chmod 700 "$CERT_DIR"
+  sudo chmod 600 "$key"
+  sudo chmod 644 "$crt"
 }
 
 # ── python dependencies (requirements.txt) ─────────────────────────────────
@@ -442,7 +481,14 @@ uninstall() {
 
 # ── main ───────────────────────────────────────────────────────────────────
 main() {
-  local mode="${1:-install}"
+  local mode="install" arg
+  for arg in "$@"; do
+    case "$arg" in
+      --http|--no-https) USE_HTTPS=0 ;;
+      --https) USE_HTTPS=1 ;;
+      *) mode="$arg" ;;
+    esac
+  done
 
   case "$mode" in
     uninstall|remove|--uninstall|-u)
@@ -455,6 +501,7 @@ main() {
       install_requirements
       ask_user
       setup_files
+      setup_cert
       install_python_deps
       create_service
       open_firewall
@@ -469,7 +516,11 @@ main() {
       local scheme="http"
       [[ -n "$HTTPS_FLAG" ]] && scheme="https"
       echo "  Open:  $scheme://${ip:-localhost}:$PORT"
-      [[ -n "$HTTPS_FLAG" ]] && echo "  HTTPS: self-signed cert in $INSTALL_DIR/database/certs/ (see README: trusting the certificate)"
+      if [[ -n "$HTTPS_FLAG" ]]; then
+        echo "  HTTPS: self-signed cert in $CERT_DIR/ (kept on reinstall)"
+        echo "         Your browser warns once about the self-signed certificate; accept it to continue."
+        echo "         For no warning at all, put ForgePanel behind Nginx Proxy Manager with a real certificate."
+      fi
       echo "  Files: $INSTALL_DIR"
       echo "  Database: $INSTALL_DIR/database/forgepanel.db (back this folder up)"
       echo "  Health: $scheme://${ip:-localhost}:$PORT/api/health"
@@ -490,7 +541,7 @@ main() {
       echo "To uninstall later: bash $0 uninstall"
       ;;
     *)
-      die "Unknown option: $mode. Use: $0 [install|uninstall]"
+      die "Unknown option: $mode. Use: $0 [install|uninstall] [--http]"
       ;;
   esac
 }
