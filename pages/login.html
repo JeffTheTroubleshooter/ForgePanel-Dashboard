@@ -4,9 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ForgePanel</title>
-<link rel="icon" type="image/png" sizes="32x32" href="../assets/favicon-32.png?v=20261102a">
-<link rel="icon" type="image/png" sizes="192x192" href="../assets/favicon-192.png?v=20261102a">
-<link rel="apple-touch-icon" href="../assets/favicon-192.png?v=20261102a">
+<link rel="icon" type="image/png" sizes="32x32" href="../assets/favicon-32.png?v=20261102b">
+<link rel="icon" type="image/png" sizes="192x192" href="../assets/favicon-192.png?v=20261102b">
+<link rel="apple-touch-icon" href="../assets/favicon-192.png?v=20261102b">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
@@ -54,7 +54,7 @@
     margin-bottom: 0.25rem;
   }
   p { color: var(--muted); font-size: 0.875rem; text-align: center; }
-  input {
+  input, select {
     background: var(--input);
     border: 1px solid var(--border);
     color: var(--text);
@@ -66,6 +66,10 @@
     font-family: inherit;
     transition: border-color 0.15s;
   }
+  select { appearance: none; cursor: pointer; color-scheme: dark; }
+  select:invalid, select option[value=""] { color: var(--muted); }
+  select option { background: var(--input); color: var(--text); }
+  select:focus,
   input:focus { outline: none; border-color: #3f3f46; }
   button.primary {
     background: var(--red);
@@ -92,14 +96,14 @@
   .credit { display:block; margin-top:1rem; text-align:center; color:#666; font-size:0.7rem; text-decoration:none; }
   .credit:hover { color:#00e5cc; }
 </style>
-<link rel="stylesheet" href="../css/main.css?v=20261102a">
+<link rel="stylesheet" href="../css/main.css?v=20261102b">
 </head>
 <body>
 <iframe id="bg" src="dots.html"></iframe>
 
 <div id="login" class="screen active">
   <div class="card">
-    <img src="../assets/logo.svg?v=20261102a" alt="ForgePanel logo" style="width:64px;height:64px;display:block;margin:0 auto 0.75rem;">
+    <img src="../assets/logo.svg?v=20261102b" alt="ForgePanel logo" style="width:64px;height:64px;display:block;margin:0 auto 0.75rem;">
     <h1>FORGEPANEL</h1>
     <p id="login-mode">Sign in to your dashboard</p>
     <input type="text" id="user" placeholder="Username" autocomplete="username">
@@ -121,7 +125,17 @@
     <input type="text" id="new-user" placeholder="New username">
     <input type="password" id="new-pw" placeholder="New password">
     <input type="password" id="new-pw2" placeholder="Confirm password">
-    <input type="text" id="sec-q" placeholder="Security question">
+    <select id="sec-q" aria-label="Security question">
+      <option value="" disabled selected>Choose a security question</option>
+      <option>What was the name of your first pet?</option>
+      <option>In what city were you born?</option>
+      <option>What is your mother&#39;s maiden name?</option>
+      <option>What was the name of your first school?</option>
+      <option>Who was your favorite childhood friend?</option>
+      <option>What was the make of your first car?</option>
+      <option>What street did you grow up on?</option>
+      <option>What is your favorite movie?</option>
+    </select>
     <input type="text" id="sec-a" placeholder="Answer">
     <button class="primary" onclick="saveNewCredentials()">Continue</button>
     <div class="error" id="change-error"></div>
@@ -153,7 +167,7 @@
   </div>
 </div>
 
-<script src="../js/auth.js?v=20261102a"></script>
+<script src="../js/auth.js?v=20261102b"></script>
 <script>
 let loginPw = "";  // kept only in memory for the change-credentials step
 function showScreen(id) {
@@ -184,14 +198,14 @@ async function saveNewCredentials() {
   const nu = document.getElementById("new-user").value.trim();
   const np = document.getElementById("new-pw").value;
   const np2 = document.getElementById("new-pw2").value;
-  const q = document.getElementById("sec-q").value.trim();
+  const q = (document.getElementById("sec-q").value || "").trim();
   const a = document.getElementById("sec-a").value.trim();
   const err = document.getElementById("change-error");
   if (!nu || !np) { err.textContent = "Enter username and password"; return; }
   if (np !== np2) { err.textContent = "Passwords do not match"; return; }
   if (np.length < 6) { err.textContent = "Use at least 6 characters"; return; }
   if (np === "forgepanel") { err.textContent = "Choose a different password"; return; }
-  if (!q || !a) { err.textContent = "Set a security question and answer"; return; }
+  if (!q || !a) { err.textContent = "Choose a security question and enter an answer"; return; }
   try {
     await api("credentials", "POST", { currentPw: loginPw, newUser: nu, newPw: np, secQ: q, secA: a });
     loginPw = "";

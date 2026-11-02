@@ -87,9 +87,22 @@ class ForgePanelTest(unittest.TestCase):
         cookie = self.login(headers=headers)
         st, d, _, _ = self.req("POST", "/api/credentials", {
             "currentPw": "forgepanel", "newUser": "admin", "newPw": "correct-horse",
-            "secQ": "first pet?", "secA": "rex"}, cookie=cookie)
+            "secQ": "What was the name of your first pet?", "secA": "rex"}, cookie=cookie)
         self.assertEqual(st, 200, d)
         return cookie
+
+    def test_credentials_require_preset_security_question(self):
+        cookie = self.login()
+        st, d, _, _ = self.req("POST", "/api/credentials", {
+            "currentPw": "forgepanel", "newUser": "admin", "newPw": "correct-horse",
+            "secQ": "my own question?", "secA": "rex"}, cookie=cookie)
+        self.assertEqual(st, 400, d)
+        st, d, _, _ = self.req("POST", "/api/credentials", {
+            "currentPw": "forgepanel", "newUser": "admin", "newPw": "correct-horse",
+            "secQ": "What is your favorite movie?", "secA": "alien"}, cookie=cookie)
+        self.assertEqual(st, 200, d)
+        st, d, _, _ = self.req("GET", "/api/security-question")
+        self.assertEqual(d["question"], "What is your favorite movie?")
 
     def put_data(self, saved, cookie):
         st, d, _, _ = self.req("PUT", "/api/data", {"saved": saved}, cookie=cookie)

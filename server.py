@@ -717,6 +717,17 @@ def r_logout(h, d):
             STATE.sessions.pop(tok, None)
     h.send_json(200, {"ok": True}, h.cookie("", 0))
 
+SECURITY_QUESTIONS = (
+    'What was the name of your first pet?',
+    'In what city were you born?',
+    "What is your mother's maiden name?",
+    'What was the name of your first school?',
+    'Who was your favorite childhood friend?',
+    'What was the make of your first car?',
+    'What street did you grow up on?',
+    'What is your favorite movie?',
+)
+
 def r_credentials(h, d):
     tok, s = h.need_session(allow_must_change=True)
     if not tok:
@@ -737,6 +748,9 @@ def r_credentials(h, d):
         return h.send_json(400, {"error": "Choose a different password"})
     if not q or not ans:
         return h.send_json(400, {"error": "Set a security question and answer"})
+    # presets only; an account's existing (custom) question is still accepted
+    if q not in SECURITY_QUESTIONS and q != (a["sec_q"] or ""):
+        return h.send_json(400, {"error": "Choose one of the listed security questions"})
     new_dek = st.rotate(s["dek"], np, ans)
     st.set_password(np)
     st.set_security(q, ans)
