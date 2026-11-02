@@ -163,7 +163,9 @@ labels:
 
 Other running containers with published ports can be ticked and imported too. If the socket is missing or permission is denied, the dialog says so. To grant access, add the user running ForgePanel to the `docker` group and restart ForgePanel, or mount the socket read-only (`/var/run/docker.sock:/var/run/docker.sock:ro`).
 
-## Tile Widgets
+## Tile Widgets (Experimental)
+
+> **Experimental:** widgets for Jellyfin, Pi-hole, AdGuard and Proxmox are not fully tested yet.
 
 Optional, per tile (**⋮ → Check & widget…**). Each widget shows one line on the tile and refreshes every 60 s (cached 30 s on the server):
 

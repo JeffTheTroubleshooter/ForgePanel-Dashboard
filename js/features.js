@@ -163,7 +163,7 @@ async function configureService(i) {
       <div><button type="button" class="btn" onclick="fxPush('${escapeHtml(s.key)}','new')">${sec.pushPath ? "Regenerate URL" : "Create push URL"}</button> <button type="button" class="btn" onclick="fxPush('${escapeHtml(s.key)}','revoke')">Revoke</button></div>
       <div class="muted">Call it with <span class="mono">curl -fsS URL</span> from a cron job or script. Add <span class="mono">?status=down</span> to report a failure.</div></div>
     <hr>
-    <label>Tile widget <select id="cf-wtype" onchange="fxCfgShow()">${opt("", w.type || "", "None")}${opt("jellyfin", w.type, "Jellyfin – now playing")}${opt("pihole", w.type, "Pi-hole – blocked")}${opt("adguard", w.type, "AdGuard Home – blocked")}${opt("proxmox", w.type, "Proxmox – node CPU/RAM")}</select></label>
+    <label>Tile widget <span class="fx-exp" title="Experimental feature">Experimental</span> <select id="cf-wtype" onchange="fxCfgShow()">${opt("", w.type || "", "None")}${opt("jellyfin", w.type, "Jellyfin – now playing")}${opt("pihole", w.type, "Pi-hole – blocked")}${opt("adguard", w.type, "AdGuard Home – blocked")}${opt("proxmox", w.type, "Proxmox – node CPU/RAM")}</select></label>
     <div class="cf-w"><label>API URL <input id="cf-wurl" value="${escapeHtml(w.url || "")}" placeholder="blank = this tile's address"></label>
       <label class="cf-wuser">Username <input id="cf-wuser" value="${escapeHtml(w.user || "")}"></label>
       <label class="cf-wnode">Node <input id="cf-wnode" value="${escapeHtml(w.node || "")}" placeholder="all nodes"></label>
