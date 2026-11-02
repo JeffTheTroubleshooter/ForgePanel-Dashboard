@@ -4,9 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ForgePanel</title>
-<link rel="icon" type="image/png" sizes="32x32" href="../assets/favicon-32.png?v=20261102h">
-<link rel="icon" type="image/png" sizes="192x192" href="../assets/favicon-192.png?v=20261102h">
-<link rel="apple-touch-icon" href="../assets/favicon-192.png?v=20261102h">
+<link rel="icon" type="image/png" sizes="32x32" href="../assets/favicon-32.png?v=20261102i">
+<link rel="icon" type="image/png" sizes="192x192" href="../assets/favicon-192.png?v=20261102i">
+<link rel="apple-touch-icon" href="../assets/favicon-192.png?v=20261102i">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
@@ -98,14 +98,14 @@
   .credit { display:block; margin-top:1rem; text-align:center; color:#666; font-size:0.7rem; text-decoration:none; }
   .credit:hover { color:#00e5cc; }
 </style>
-<link rel="stylesheet" href="../css/main.css?v=20261102h">
+<link rel="stylesheet" href="../css/main.css?v=20261102i">
 </head>
 <body>
 <iframe id="bg" src="dots.html"></iframe>
 
 <div id="login" class="screen active">
   <div class="card">
-    <img src="../assets/logo.svg?v=20261102h" alt="ForgePanel logo" style="width:64px;height:64px;display:block;margin:0 auto 0.75rem;">
+    <img src="../assets/logo.svg?v=20261102i" alt="ForgePanel logo" style="width:64px;height:64px;display:block;margin:0 auto 0.75rem;">
     <h1>FORGEPANEL</h1>
     <p id="login-mode">Sign in to your dashboard</p>
     <input type="text" id="user" placeholder="Username" autocomplete="username">
@@ -170,7 +170,7 @@
   </div>
 </div>
 
-<script src="../js/auth.js?v=20261102h"></script>
+<script src="../js/auth.js?v=20261102i"></script>
 <script>
 let loginPw = "";  // kept only in memory for the change-credentials step
 function showScreen(id) {
@@ -200,7 +200,13 @@ async function auth() {
     const r = await api("login", "POST", { user, pw });
     if (r.mustChange) { loginPw = pw; showScreen("change-pw"); }
     else { try { sessionStorage.setItem("fp_fresh_login", "1"); } catch {} location.href = "dashboard.html"; }
-  } catch (e) { err.textContent = e.message; }
+  } catch (e) {
+    const d = e.data || {};
+    if (e.status === 429 && d.lockedUntil) {
+      const at = new Date(d.lockedUntil * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      err.textContent = `🔒 Sign-in locked after too many failed attempts. Try again in about ${Math.max(1, Math.ceil((d.retryIn || 60) / 60))} min (around ${at}).`;
+    } else err.textContent = e.message;
+  }
 }
 async function saveNewCredentials() {
   const nu = document.getElementById("new-user").value.trim();

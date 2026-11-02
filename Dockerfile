@@ -35,7 +35,7 @@ EXPOSE 8084
 VOLUME ["/app/database", "/app/custom_services"]
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD python3 -c "import sys,urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8084/api/health', timeout=4).status == 200 else 1)"
+  CMD python3 -c "import ssl,urllib.request as u; u.urlopen('https://127.0.0.1:8084/api/health', timeout=4, context=ssl._create_unverified_context())" || python3 -c "import urllib.request as u; u.urlopen('http://127.0.0.1:8084/api/health', timeout=4)"
 
 # Extra flags are appended, e.g. `docker run ... forgepanel --https`
 ENTRYPOINT ["python3", "server.py", "--host", "0.0.0.0", "--port", "8084"]

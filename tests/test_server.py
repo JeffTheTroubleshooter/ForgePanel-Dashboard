@@ -35,6 +35,8 @@ class ForgePanelTest(unittest.TestCase):
         self.db = os.path.join(self.tmp, "forgepanel.db")
         server.STATE = server.State(server.Store(self.db))
         fp_ext.migrate()
+        server.SYS_FORCED.clear()
+        server.load_sys()
         self._old_custom_dir = server.CUSTOM_DIR
         server.CUSTOM_DIR = os.path.join(self.tmp, "custom_services")
         fp_ext.PREV.clear()
@@ -304,20 +306,25 @@ class ForgePanelTest(unittest.TestCase):
 
     # ── rate limiting / proxy awareness ─────────────────────────────────────
     def test_login_rate_limit(self):
-        for _ in range(server.RATE_MAX):
+        for _ in range(server.SYS["lockout_max"] - 1):
             st, _, _, _ = self.req("POST", "/api/login", {"user": "admin", "pw": "wrong"})
             self.assertEqual(st, 401)
         st, d, _, _ = self.req("POST", "/api/login", {"user": "admin", "pw": "wrong"})
         self.assertEqual(st, 429)
         self.assertIn("Too many", d["error"])
+        self.assertTrue(d["locked"])
+        # locked even with the right password, until the lockout expires
+        st, d, _, _ = self.req("POST", "/api/login", {"user": "admin", "pw": "forgepanel"})
+        self.assertEqual(st, 429)
+        self.assertGreater(d["lockedUntil"], time.time() + 14 * 60)
 
     def test_trusted_proxy_uses_forwarded_for_and_proto(self):
         server.TRUSTED_PROXIES = [ipaddress.ip_network("127.0.0.1/32")]
         st, _, _, _ = self.req("POST", "/api/login", {"user": "admin", "pw": "wrong"},
                                {"X-Forwarded-For": "203.0.113.7", "X-Forwarded-Proto": "https"})
         self.assertEqual(st, 401)
-        self.assertIn("203.0.113.7", server.STATE.fails)
-        self.assertNotIn("127.0.0.1", server.STATE.fails)
+        self.assertIn("admin|203.0.113.7", server.STATE.lockouts)
+        self.assertNotIn("admin|127.0.0.1", server.STATE.lockouts)
 
         st, d, sc, _ = self.req("POST", "/api/login", {"user": "admin", "pw": "forgepanel"},
                                 {"X-Forwarded-For": "203.0.113.7", "X-Forwarded-Proto": "https"})
@@ -368,6 +375,123 @@ class ForgePanelTest(unittest.TestCase):
         self.assertEqual(rows[0][0], 1)
         self.assertNotIn("10.9.8.7", rows[0][1])
         self.assertEqual(st.load_saved(dek)["Jellyfin"]["ip"], "10.9.8.7")
+
+    # ── Settings → Security / Monitoring / Backup ───────────────────────────
+    def test_system_settings_require_session(self):
+        self.assertEqual(self.req("GET", "/api/system-settings")[0], 401)
+        self.assertEqual(self.req("PUT", "/api/system-settings", {"idle_timeout": 300})[0], 401)
+        self.assertEqual(self.req("POST", "/api/system/restart", {})[0], 401)
+        self.assertEqual(self.req("POST", "/api/backup", {"password": "x"})[0], 401)
+        self.assertEqual(self.req("POST", "/api/restore", {"password": "x"})[0], 401)
+
+    def test_system_settings_persist_and_validate(self):
+        cookie = self.complete_setup()
+        server.RUNTIME["protocol"] = "https"
+        self.addCleanup(server.RUNTIME.clear)
+        st, d, _, _ = self.req("GET", "/api/system-settings", cookie=cookie)
+        self.assertEqual(st, 200, d)
+        self.assertFalse(d["pendingRestart"])
+        self.assertEqual(d["settings"]["idle_timeout"], 60)
+        self.assertEqual(d["settings"]["protocol"], "https")
+        for bad in ({"idle_timeout": 30}, {"idle_timeout": -1}, {"idle_timeout": "60"}, {"idle_timeout": 1.5},
+                    {"protocol": "ftp"}, {"check_interval": 5}, {"check_timeout": 60}, {"lockout_max": 101},
+                    {"lockout_minutes": 0}, {"bogus": 1}, {"check_interval": 10, "check_timeout": 10}):
+            st, d, _, _ = self.req("PUT", "/api/system-settings", bad, cookie=cookie)
+            self.assertEqual(st, 400, bad)
+        st, d, _, _ = self.req("PUT", "/api/system-settings", {"idle_timeout": 900, "protocol": "http",
+                               "check_interval": 30, "check_timeout": 5, "lockout_max": 0}, cookie=cookie)
+        self.assertEqual(st, 200, d)
+        self.assertEqual(server.SYS["idle_timeout"], 900)
+        self.assertTrue(d["pendingRestart"])
+        self.assertTrue(d["newUrl"].startswith("http://"))
+        # status / heartbeat report the new idle timeout immediately
+        self.assertEqual(self.req("GET", "/api/status", cookie=cookie)[1]["idleTimeout"], 900)
+        # survives a restart: reopen the database
+        server.STATE.store.close()
+        server.STATE = server.State(server.Store(self.db))
+        server.SYS.clear(); server.SYS.update(server.SYS_DEFAULTS)
+        server.load_sys()
+        self.assertEqual(server.SYS["idle_timeout"], 900)
+        self.assertEqual(server.SYS["protocol"], "http")
+        self.assertEqual(server.SYS["check_interval"], 30)
+        self.assertEqual(server.SYS["lockout_max"], 0)
+
+    def test_forced_protocol_wins_over_saved(self):
+        server.STATE.store.set_meta(server.SYS_KEY, json.dumps({"protocol": "http"}))
+        old = dict(server.SYS_DEFAULTS)
+        try:
+            server.SYS_DEFAULTS["protocol"] = "https"
+            server.SYS_FORCED.add("protocol")
+            self.assertEqual(server.load_sys()["protocol"], "https")
+            server.SYS_FORCED.clear()
+            self.assertEqual(server.load_sys()["protocol"], "http")
+        finally:
+            server.SYS_DEFAULTS.update(old)
+            server.SYS_FORCED.clear()
+
+    def test_idle_timeout_setting_enforced(self):
+        cookie = self.complete_setup()
+        self.req("PUT", "/api/system-settings", {"idle_timeout": 0}, cookie=cookie)
+        tok = cookie.split("=", 1)[1]
+        server.STATE.sessions[tok]["seen"] -= 10_000
+        self.assertEqual(self.req("GET", "/api/system-settings", cookie=cookie)[0], 200)
+        server.STATE.sessions[tok]["seen"] -= 10_000
+        self.req("PUT", "/api/system-settings", {"idle_timeout": 60}, cookie=cookie)  # touches the session
+        server.STATE.sessions[tok]["seen"] -= 120
+        self.assertEqual(self.req("GET", "/api/system-settings", cookie=cookie)[0], 401)
+
+    def test_lockout_per_user_and_ip_configurable_and_off(self):
+        server.SYS.update(lockout_max=3, lockout_minutes=2)
+        for _ in range(2):
+            self.assertEqual(self.req("POST", "/api/login", {"user": "admin", "pw": "bad"})[0], 401)
+        st, d, _, _ = self.req("POST", "/api/login", {"user": "admin", "pw": "bad"})
+        self.assertEqual(st, 429)
+        self.assertLessEqual(d["retryIn"], 120)
+        # another username from the same IP is not locked
+        self.assertEqual(self.req("POST", "/api/login", {"user": "someone", "pw": "bad"})[0], 401)
+        # expire the lockout
+        server.STATE.lockouts["admin|127.0.0.1"]["until"] = time.time() - 1
+        self.assertEqual(self.req("POST", "/api/login", {"user": "admin", "pw": "forgepanel"})[0], 200)
+        # off: unlimited attempts
+        server.SYS.update(lockout_max=0)
+        for _ in range(8):
+            self.assertEqual(self.req("POST", "/api/login", {"user": "admin", "pw": "bad"})[0], 401)
+
+    def test_backup_restore_round_trip(self):
+        cookie = self.complete_setup()
+        self.assertEqual(self.req("PUT", "/api/data", {"saved": {"svc1": {"ip": "10.0.0.5", "port": 80}}},
+                                  cookie=cookie)[0], 200)
+        self.req("PUT", "/api/system-settings", {"idle_timeout": 600}, cookie=cookie)
+        self.assertEqual(self.req("POST", "/api/backup", {"password": "nope"}, cookie=cookie)[0], 401)
+        st, d, _, _ = self.req("POST", "/api/backup", {"password": "correct-horse"}, cookie=cookie)
+        self.assertEqual(st, 200, d)
+        b = d["backup"]
+        self.assertEqual(b["format"], "forgepanel-backup")
+        self.assertNotIn("uptime", b["tables"])
+        self.assertNotIn("PRIVATE KEY", json.dumps(b))
+        # change things, then restore
+        self.req("PUT", "/api/data", {"saved": {"other": {"ip": "10.9.9.9", "port": 1}}}, cookie=cookie)
+        self.req("PUT", "/api/system-settings", {"idle_timeout": 0}, cookie=cookie)
+        # validation and confirmation
+        for bad in ({"format": "x"}, dict(b, version=99), dict(b, tables={"evil": {}}),
+                    dict(b, tables=dict(b["tables"], account={"columns": ["user"], "rows": []}))):
+            st, _, _, _ = self.req("POST", "/api/restore", {"password": "correct-horse", "confirm": True,
+                                                            "backup": bad}, cookie=cookie)
+            self.assertEqual(st, 400)
+        st, _, _, _ = self.req("POST", "/api/restore", {"password": "correct-horse", "backup": b}, cookie=cookie)
+        self.assertEqual(st, 400)
+        st, d, _, _ = self.req("POST", "/api/restore", {"password": "correct-horse", "confirm": True,
+                                                        "backup": b}, cookie=cookie)
+        self.assertEqual(st, 200, d)
+        self.assertTrue(os.path.exists(os.path.join(self.tmp, "backups", d["preRestore"])))
+        # sessions were dropped; sign in again and see the backed-up data
+        self.assertEqual(self.req("GET", "/api/data", cookie=cookie)[0], 401)
+        cookie = self.login("correct-horse")
+        st, d, _, _ = self.req("GET", "/api/data", cookie=cookie)
+        self.assertEqual(st, 200, d)
+        self.assertIn("svc1", json.dumps(d))
+        self.assertNotIn("10.9.9.9", json.dumps(d))
+        self.assertEqual(server.SYS["idle_timeout"], 600)
 
 
 if __name__ == "__main__":

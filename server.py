@@ -46,7 +46,11 @@ DEFAULT_DB = os.path.join(ROOT, "database", "forgepanel.db")
 CUSTOM_DIR = os.path.join(ROOT, "custom_services")
 GEN_MARK = "forgepanel-scan"   # "generated_by" value of scan-written custom_services/*.json
 SESSION_TTL = 12 * 3600
-IDLE_TIMEOUT = 60                      # seconds without user activity before a session is rejected (--idle-timeout)
+IDLE_TIMEOUT = 60                      # default idle sign-out, seconds (--idle-timeout; Settings can override)
+SYS_DEFAULTS = {"idle_timeout": IDLE_TIMEOUT, "protocol": "https", "check_interval": 60, "check_timeout": 3,
+                "lockout_max": 5, "lockout_minutes": 15}
+SYS = dict(SYS_DEFAULTS)               # effective values (see load_sys / Settings)
+RUNTIME = {}                           # running server facts (protocol, port, restartable)
 PASSIVE_HEADER = "X-FP-Passive"        # requests carrying this (background polling) do not refresh last-seen
 COOKIE = "fp_session"
 MAX_BODY = 12 * 1024 * 1024
@@ -441,6 +445,7 @@ class State:
         self.store = store
         self.sessions = {}      # token -> {"exp": t, "seen": t, "dek": key|None}
         self.fails = {}         # ip -> [timestamps]
+        self.lockouts = {}      # "user|ip" -> {"fails": [ts], "until": ts}
         self.lock = threading.Lock()
         self.scan = {"running": False, "error": None, "started": None, "source": None}
         # Data key for background jobs (auto-scan, uptime). Memory only; set at the first
@@ -459,7 +464,8 @@ class State:
 
     @staticmethod
     def _alive(s, now):
-        return s["exp"] > now and (IDLE_TIMEOUT <= 0 or now - s.get("seen", now) <= IDLE_TIMEOUT)
+        idle = SYS["idle_timeout"]
+        return s["exp"] > now and (idle <= 0 or now - s.get("seen", now) <= idle)
 
     def get_session(self, tok, touch=False):
         """Return the live session for tok, or None. Sessions idle longer than IDLE_TIMEOUT are
@@ -490,6 +496,44 @@ class State:
         with self.lock:
             self.fails.setdefault(ip, []).append(time.time())
 
+    # per username+IP sign-in lockout (configurable in Settings → Security)
+    def locked_until(self, key):
+        now = time.time()
+        with self.lock:
+            e = self.lockouts.get(key)
+            if e and e.get("until", 0) > now and SYS["lockout_max"] > 0:
+                return e["until"]
+            if e and e.get("until"):
+                self.lockouts.pop(key, None)
+            return 0
+
+    def login_fail(self, key):
+        """Record a failed sign-in; return the lock-until epoch if this failure triggers a lockout."""
+        mx = SYS["lockout_max"]
+        if mx <= 0:
+            return 0
+        now, window = time.time(), SYS["lockout_minutes"] * 60
+        with self.lock:
+            e = self.lockouts.setdefault(key, {"fails": []})
+            e["fails"] = [t for t in e["fails"] if now - t < window] + [now]
+            if len(e["fails"]) >= mx:
+                e["until"] = now + window
+                e["fails"] = []
+                log.warning("Sign-in locked for %s after %d failed attempts", key, mx)
+                return e["until"]
+            return 0
+
+    def attempts_left(self, key):
+        mx = SYS["lockout_max"]
+        if mx <= 0:
+            return None
+        with self.lock:
+            return mx - len(self.lockouts.get(key, {}).get("fails", []))
+
+    def login_clear(self, key):
+        with self.lock:
+            self.lockouts.pop(key, None)
+
     def clear_fails(self, ip):
         with self.lock:
             self.fails.pop(ip, None)
@@ -500,6 +544,11 @@ class State:
         with self.lock:
             for t in [t for t, s in self.sessions.items() if not self._alive(s, now)]:
                 self.sessions.pop(t, None)
+            win = SYS["lockout_minutes"] * 60
+            for k in list(self.lockouts):
+                e = self.lockouts[k]
+                if e.get("until", 0) <= now and not [t for t in e.get("fails", []) if now - t < win]:
+                    self.lockouts.pop(k, None)
             for ip in list(self.fails):
                 lst = [t for t in self.fails[ip] if now - t < RATE_WINDOW]
                 if lst:
@@ -801,22 +850,30 @@ def r_status(h, d):
     h.send_json(200, {"authenticated": bool(s), "user": a["user"] if s else None,
                       "mustChange": bool(a["must_change"]) if s else None,
                       "hasSecurity": bool(a["sec_hash"]), "encryption": HAVE_CRYPTO,
-                      "idleTimeout": IDLE_TIMEOUT})
+                      "idleTimeout": SYS["idle_timeout"]})
 
 def r_heartbeat(h, d):
     """Sent by the client only on real user activity; refreshes the session's last-seen."""
     tok, s = h.need_session(allow_must_change=True)
     if tok:
-        h.send_json(200, {"ok": True, "idleTimeout": IDLE_TIMEOUT})
+        h.send_json(200, {"ok": True, "idleTimeout": SYS["idle_timeout"]})
 
 def r_login(h, d):
-    if not h.rate_check():
-        return
     user, pw = str(d.get("user", "")), str(d.get("pw", ""))
+    lk = lockout_key(user, h.ip())
+    until = STATE.locked_until(lk)
+    if until:
+        return h.send_json(429, lockout_body(until))
     if not STATE.store.check_password(user, pw):
-        STATE.fail(h.ip())
-        return h.send_json(401, {"error": "Invalid username or password"})
-    STATE.clear_fails(h.ip())
+        until = STATE.login_fail(lk)
+        if until:
+            return h.send_json(429, lockout_body(until))
+        left = STATE.attempts_left(lk)
+        msg = "Invalid username or password"
+        if left is not None and left <= 2:
+            msg += f" ({left} attempt{'s' if left != 1 else ''} left before a {SYS['lockout_minutes']} min lockout)"
+        return h.send_json(401, {"error": msg})
+    STATE.login_clear(lk)
     dek = STATE.store.unlock(pw)
     STATE.set_worker(dek)
     STATE.prune()
@@ -1129,7 +1186,7 @@ def r_check(h, d):
             return {"online": False}
         if not host or not re.fullmatch(r"[A-Za-z0-9.:\-\[\]]+", host) or not 0 < port < 65536:
             return {"online": False}
-        return check_service(host, port, "https" if it.get("scheme") == "https" else "http")
+        return check_service(host, port, "https" if it.get("scheme") == "https" else "http", timeout=SYS["check_timeout"])
     import concurrent.futures as cf
     with cf.ThreadPoolExecutor(16) as ex:
         results = list(ex.map(one, items))
@@ -1235,6 +1292,7 @@ def r_pending_post(h, d):
 
 # ── 2) uptime + response time ──────────────────────────────────────────────
 UPTIME = {"interval": 60, "retention_days": 8}
+UPTIME_WAKE = threading.Event()
 
 def uptime_key(ip, port):
     st = STATE.store
@@ -1268,7 +1326,7 @@ def probe_latency(c):
     if not re.fullmatch(r"[A-Za-z0-9.:\-\[\]]+", host):
         return None
     t0 = time.monotonic()
-    r = check_service(host, port, "https" if c.get("scheme") == "https" else "http", timeout=3.0)
+    r = check_service(host, port, "https" if c.get("scheme") == "https" else "http", timeout=SYS["check_timeout"])
     return host, port, r["online"], round((time.monotonic() - t0) * 1000, 1)
 
 def uptime_loop():
@@ -1286,7 +1344,8 @@ def uptime_loop():
                     STATE.store.db.execute("DELETE FROM uptime WHERE ts < ?", (now - UPTIME["retention_days"] * 86400,))
         except Exception:
             log.exception("uptime checker")
-        time.sleep(UPTIME["interval"])
+        UPTIME_WAKE.wait(SYS["check_interval"])   # set() by Settings so a new interval applies now
+        UPTIME_WAKE.clear()
 
 def r_uptime(h, d):
     tok, s = h.need_session()
@@ -1322,7 +1381,7 @@ def r_uptime(h, d):
         last = rows[-1] if rows else None
         out.append({"uptime": round(100 * ups / total, 2) if total else None, "samples": total,
                     "last": {"ts": last[0], "up": bool(last[1]), "ms": last[2]} if last else None, "series": series})
-    h.send_json(200, {"range": rng, "interval": UPTIME["interval"], "results": out})
+    h.send_json(200, {"range": rng, "interval": SYS["check_interval"], "results": out})
 
 # ── 5) server stats from /proc ─────────────────────────────────────────────
 STATS = {"history": [], "prev_cpu": None, "prev_net": None, "prev_t": None}
@@ -1402,7 +1461,7 @@ def ensure_cert(cert, key):
     if os.path.exists(cert) and os.path.exists(key):
         return
     if not shutil.which("openssl"):
-        sys.exit("--https needs a certificate. Install openssl or pass --cert/--key.")
+        raise RuntimeError("HTTPS needs a certificate: install openssl or pass --cert/--key.")
     os.makedirs(os.path.dirname(cert), mode=0o700, exist_ok=True)
     host = socket.gethostname()
     ips = {"127.0.0.1"}
@@ -1424,6 +1483,290 @@ def ensure_cert(cert, key):
     os.chmod(key, 0o600)
     os.chmod(cert, 0o644)
     log.info("Generated self-signed certificate %s (%s)", cert, san)
+
+# ── 4) system settings (Settings → Security / Monitoring) ───────────────────
+# Stored in plaintext JSON in meta['sys_settings'] (no secrets) so the server can read them at
+# startup, before anyone signs in. Precedence (highest first):
+#   1. --force-protocol together with --https/--http (protocol only; locks the dashboard selector)
+#   2. the value saved from the dashboard (Settings → Security / Monitoring)
+#   3. command-line flags (--idle-timeout, --uptime-interval, --https/--http) as the default
+#   4. built-in defaults (idle 60 s, HTTPS, check every 60 s with a 3 s timeout, lock after 5 / 15 min)
+SYS_KEY = "sys_settings"
+SYS_LIMITS = {   # name: (min, max, allow_zero)
+    "idle_timeout": (60, 86400, True),
+    "check_interval": (10, 3600, False),
+    "check_timeout": (1, 30, False),
+    "lockout_max": (1, 100, True),
+    "lockout_minutes": (1, 1440, False),
+}
+SYS_FORCED = set()
+
+def validate_sys(d, partial=True):
+    """Validate a (partial) settings dict; return the cleaned dict or raise ValueError."""
+    if not isinstance(d, dict):
+        raise ValueError("settings must be an object")
+    out = {}
+    for k, v in d.items():
+        if k == "protocol":
+            if v not in ("http", "https"):
+                raise ValueError("protocol must be 'http' or 'https'")
+            out[k] = v
+        elif k in SYS_LIMITS:
+            lo, hi, zero = SYS_LIMITS[k]
+            if isinstance(v, bool) or not isinstance(v, (int, float)) or v != int(v):
+                raise ValueError(f"{k} must be a whole number")
+            v = int(v)
+            if not ((zero and v == 0) or lo <= v <= hi):
+                raise ValueError(f"{k} must be {'0 (off) or ' if zero else ''}between {lo} and {hi}")
+            out[k] = v
+        else:
+            raise ValueError(f"unknown setting: {k}")
+    return out
+
+def saved_sys():
+    try:
+        raw = json.loads(STATE.store.meta(SYS_KEY, "{}") or "{}")
+    except ValueError:
+        return {}
+    clean = {}
+    for k, v in (raw.items() if isinstance(raw, dict) else []):
+        try:
+            clean.update(validate_sys({k: v}))
+        except ValueError:
+            log.warning("Ignoring invalid saved setting %s=%r", k, v)
+    return clean
+
+def load_sys():
+    """Recompute SYS from defaults + saved values + forced flags."""
+    eff = dict(SYS_DEFAULTS)
+    eff.update(saved_sys())
+    for k in SYS_FORCED:
+        eff[k] = SYS_DEFAULTS[k]
+    if eff["check_timeout"] >= eff["check_interval"]:
+        eff["check_timeout"] = min(eff["check_timeout"], eff["check_interval"] - 1)
+    SYS.clear()
+    SYS.update(eff)
+    return SYS
+
+def lockout_key(user, ip):
+    return f"{user.strip().lower()}|{ip}"
+
+def lockout_body(until):
+    mins = max(1, int((until - time.time() + 59) // 60))
+    return {"error": f"Too many failed sign-in attempts. Locked for about {mins} min.",
+            "locked": True, "lockedUntil": int(until), "retryIn": max(1, int(until - time.time()))}
+
+def base_url(h, proto):
+    host = (h.headers.get("Host") or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9.\-]+(:\d+)?|\[[0-9A-Fa-f:.]+\](:\d+)?", host):
+        host = f"localhost:{RUNTIME.get('port', 8084)}"
+    return f"{proto}://{host}/"
+
+def r_sys_get(h, d):
+    tok, s = h.need_session()
+    if not tok:
+        return
+    running = RUNTIME.get("protocol", "https" if getattr(h.server, "is_https", False) else "http")
+    h.send_json(200, {"settings": dict(SYS), "saved": saved_sys(), "defaults": dict(SYS_DEFAULTS),
+                      "forced": sorted(SYS_FORCED), "limits": {k: list(v) for k, v in SYS_LIMITS.items()},
+                      "running": {"protocol": running, "fallback": RUNTIME.get("fallback")},
+                      "pendingRestart": SYS["protocol"] != running,
+                      "newUrl": base_url(h, SYS["protocol"]),
+                      "restartSupported": bool(RUNTIME.get("restartable"))})
+
+def r_sys_put(h, d):
+    tok, s = h.need_session()
+    if not tok:
+        return
+    upd = validate_sys(d.get("settings", d))
+    if "protocol" in upd and "protocol" in SYS_FORCED and upd["protocol"] != SYS["protocol"]:
+        raise ValueError("protocol is fixed by --force-protocol on the command line")
+    merged = dict(SYS, **upd)
+    if merged["check_timeout"] >= merged["check_interval"]:
+        raise ValueError("check_timeout must be shorter than check_interval")
+    cur = saved_sys()
+    cur.update(upd)
+    STATE.store.set_meta(SYS_KEY, json.dumps(cur, sort_keys=True))
+    load_sys()
+    UPTIME_WAKE.set()
+    log.info("Settings updated: %s", ", ".join(f"{k}={v}" for k, v in sorted(upd.items())))
+    r_sys_get(h, d)
+
+def r_sys_restart(h, d):
+    tok, s = h.need_session()
+    if not tok:
+        return
+    if not RUNTIME.get("restartable"):
+        return h.send_json(409, {"error": "Restart is not available in this mode; restart the service manually."})
+    url = base_url(h, SYS["protocol"])
+    h.send_json(200, {"ok": True, "newUrl": url})
+    log.info("Restart requested from the dashboard (next protocol: %s)", SYS["protocol"])
+    threading.Thread(target=_reexec, daemon=True, name="reexec").start()
+
+def _reexec():
+    time.sleep(0.7)   # let the response flush
+    try:
+        srv = RUNTIME.get("server")
+        if srv:
+            srv.socket.close()
+        STATE.store.close()
+    except Exception:
+        pass
+    os.execv(sys.executable, [sys.executable] + sys.argv)
+
+# ── 5) backup / restore ────────────────────────────────────────────────────
+# A backup is a JSON copy of the SQLite tables needed to fully restore the dashboard: account
+# (password hash + wrapped data key, so the backup's password is the one to sign in with),
+# settings, custom services, icons, scan results, push state and meta. Uptime history is not
+# included, and TLS certificates/private keys (files in database/certs/) never are. Dashboard
+# data and secrets (webhooks, tokens) stay encrypted with the account's key when encryption is on.
+BACKUP_FORMAT, BACKUP_VERSION = "forgepanel-backup", 1
+BACKUP_TABLES = ("account", "settings", "custom_services", "meta", "icons", "scan_results", "push_state")
+
+def _cols(table):
+    return [r[1] for r in STATE.store.q(f"PRAGMA table_info({table})")]
+
+def make_backup():
+    tables = {}
+    for t in BACKUP_TABLES:
+        cols = _cols(t)
+        if not cols:
+            continue
+        rows = []
+        for r in STATE.store.q(f"SELECT {', '.join(cols)} FROM {t}"):
+            rows.append([{"$b64": base64.b64encode(v).decode()} if isinstance(v, (bytes, bytearray, memoryview)) else v
+                         for v in r])
+        tables[t] = {"columns": cols, "rows": rows}
+    return {"format": BACKUP_FORMAT, "version": BACKUP_VERSION, "app": VERSION,
+            "created": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "encrypted": HAVE_CRYPTO,
+            "note": ("Dashboard data is encrypted with your account key; sign in with the password that was "
+                     "active when this backup was made." if HAVE_CRYPTO else
+                     "WARNING: encryption was unavailable, so dashboard data and secrets in this file are PLAIN TEXT.")
+                    + " TLS private keys are never included. Keep this file private.",
+            "tables": tables}
+
+def validate_backup(b):
+    if not isinstance(b, dict) or b.get("format") != BACKUP_FORMAT:
+        raise ValueError("Not a ForgePanel backup file")
+    if b.get("version") != BACKUP_VERSION:
+        raise ValueError(f"Unsupported backup version {b.get('version')!r}")
+    tables = b.get("tables")
+    if not isinstance(tables, dict) or "account" not in tables:
+        raise ValueError("Backup is missing the account table")
+    out = {}
+    for t, v in tables.items():
+        if t not in BACKUP_TABLES:
+            raise ValueError(f"Unexpected table in backup: {t}")
+        have = _cols(t)
+        cols, rows = (v or {}).get("columns"), (v or {}).get("rows")
+        if not isinstance(cols, list) or not isinstance(rows, list) or not cols or any(c not in have for c in cols):
+            raise ValueError(f"Backup table {t} does not match this version's schema")
+        clean = []
+        for r in rows:
+            if not isinstance(r, list) or len(r) != len(cols):
+                raise ValueError(f"Malformed row in backup table {t}")
+            row = []
+            for x in r:
+                if isinstance(x, dict) and set(x) == {"$b64"}:
+                    row.append(base64.b64decode(x["$b64"], validate=True))
+                elif x is None or isinstance(x, (str, int, float)):
+                    row.append(x)
+                else:
+                    raise ValueError(f"Malformed value in backup table {t}")
+            clean.append(row)
+        out[t] = (cols, clean)
+    acc_cols, acc_rows = out["account"]
+    if len(acc_rows) != 1 or not {"user", "pw_hash", "pw_salt"} <= set(acc_cols):
+        raise ValueError("Backup must contain exactly one account")
+    return out
+
+def write_pre_restore():
+    d = os.path.join(os.path.dirname(STATE.store.path), "backups")
+    os.makedirs(d, mode=0o700, exist_ok=True)
+    path = os.path.join(d, time.strftime("pre-restore-%Y%m%d-%H%M%S.json"))
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        json.dump(make_backup(), f)
+    old = sorted(x for x in os.listdir(d) if x.startswith("pre-restore-"))
+    for x in old[:-5]:
+        try:
+            os.remove(os.path.join(d, x))
+        except OSError:
+            pass
+    return path
+
+def restore_backup(parsed):
+    st = STATE.store
+    with st.lock:
+        st.db.execute("BEGIN")
+        try:
+            for t in BACKUP_TABLES:
+                if t in parsed or t != "push_state":
+                    if _cols(t):
+                        st.db.execute(f"DELETE FROM {t}")
+            for t, (cols, rows) in parsed.items():
+                st.db.executemany(f"INSERT INTO {t} ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})", rows)
+            st.db.execute("COMMIT")
+        except Exception:
+            st.db.execute("ROLLBACK")
+            raise
+    with STATE.lock:
+        STATE.sessions.clear()
+    STATE.worker = {"ready": not HAVE_CRYPTO, "dek": None}   # key may differ now: wait for next sign-in
+    load_sys()
+
+def r_backup(h, d):
+    tok, s = h.need_session()
+    if not tok or not h.rate_check():
+        return
+    a = STATE.store.account()
+    if not hmac.compare_digest(kdf(str(d.get("password", "")), a["pw_salt"]), a["pw_hash"]):
+        STATE.fail(h.ip())
+        return h.send_json(401, {"error": "Wrong password"})
+    h.send_json(200, {"backup": make_backup(),
+                      "filename": time.strftime("forgepanel-backup-%Y%m%d-%H%M%S.json")})
+
+def r_restore(h, d):
+    tok, s = h.need_session()
+    if not tok or not h.rate_check():
+        return
+    a = STATE.store.account()
+    if not hmac.compare_digest(kdf(str(d.get("password", "")), a["pw_salt"]), a["pw_hash"]):
+        STATE.fail(h.ip())
+        return h.send_json(401, {"error": "Wrong password"})
+    if d.get("confirm") is not True:
+        raise ValueError("confirm must be true")
+    parsed = validate_backup(d.get("backup"))
+    pre = write_pre_restore()
+    restore_backup(parsed)
+    log.warning("Restored a backup from the dashboard (pre-restore copy: %s)", pre)
+    h.send_json(200, {"ok": True, "preRestore": os.path.basename(pre), "signIn": True}, h.cookie("", 0))
+
+def tls_context(cert, key, dcert, dkey):
+    """Build a TLS context; on a missing/bad cert regenerate the default self-signed one.
+    Returns None if nothing works (caller falls back to HTTP)."""
+    def build(c, k):
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+        ctx.load_cert_chain(c, k)
+        return ctx
+    try:
+        ensure_cert(cert, key)
+        return build(cert, key)
+    except Exception as e:
+        log.warning("Could not load certificate %s / key %s: %s", cert, key, e)
+    try:
+        dcert, dkey = os.path.abspath(dcert), os.path.abspath(dkey)
+        if (dcert, dkey) == (cert, key):   # default pair is bad: move it aside and regenerate
+            for p in (dcert, dkey):
+                if os.path.exists(p):
+                    os.replace(p, p + ".bad")
+        ensure_cert(dcert, dkey)
+        log.warning("Using regenerated self-signed certificate %s", dcert)
+        return build(dcert, dkey)
+    except Exception as e:
+        log.warning("Could not regenerate a self-signed certificate: %s", e)
+        return None
 
 ROUTES = {
     ("GET", "/api/health"): r_health,
@@ -1455,6 +1798,11 @@ ROUTES = {
     ("GET", "/api/scan"): r_scan_get,
     ("POST", "/api/scan/cancel"): r_scan_cancel,
     ("POST", "/api/scan/import"): r_scan_import,
+    ("GET", "/api/system-settings"): r_sys_get,
+    ("PUT", "/api/system-settings"): r_sys_put,
+    ("POST", "/api/system/restart"): r_sys_restart,
+    ("POST", "/api/backup"): r_backup,
+    ("POST", "/api/restore"): r_restore,
 }
 
 import fp_ext   # noqa: E402  (check types, push, notifications, Docker, widgets, status page)
@@ -1466,18 +1814,30 @@ def main():
     ap.add_argument("--port", type=int, default=8084)
     ap.add_argument("--host", default="0.0.0.0")
     ap.add_argument("--db", default=DEFAULT_DB)
-    ap.add_argument("--https", action="store_true", help="serve HTTPS (self-signed cert generated in database/certs/ if missing)")
+    proto = ap.add_mutually_exclusive_group()
+    proto.add_argument("--https", dest="proto", action="store_const", const="https",
+                       help="default protocol HTTPS (self-signed cert generated in database/certs/ if missing)")
+    proto.add_argument("--http", dest="proto", action="store_const", const="http", help="default protocol plain HTTP")
+    ap.add_argument("--force-protocol", action="store_true",
+                    help="make --https/--http win over the protocol saved in Settings (locks the dashboard selector)")
     ap.add_argument("--cert", help="certificate file (default database/certs/server.crt)")
     ap.add_argument("--key", help="private key file (default database/certs/server.key)")
-    ap.add_argument("--uptime-interval", type=int, default=60, help="seconds between uptime checks (default 60)")
+    ap.add_argument("--uptime-interval", type=int, default=60,
+                    help="default seconds between uptime checks (default 60; Settings can override)")
     ap.add_argument("--uptime-retention", type=int, default=8, help="days of uptime history to keep (default 8)")
     ap.add_argument("--docker-sock", default=fp_ext.DOCKER_SOCK, help="Docker socket for label discovery (read-only GETs)")
     ap.add_argument("--trusted-proxy", action="append", metavar="CIDR",
                     help="trust X-Forwarded-For/X-Forwarded-Proto from this proxy IP or CIDR (repeatable)")
     ap.add_argument("--idle-timeout", type=int, default=IDLE_TIMEOUT,
-                    help="sign out sessions after this many seconds without user activity (default 60, 0 = off)")
+                    help="default idle sign-out in seconds (default 60, 0 = off; Settings can override)")
     args = ap.parse_args()
     IDLE_TIMEOUT = max(0, args.idle_timeout)
+    SYS_DEFAULTS["idle_timeout"] = IDLE_TIMEOUT
+    SYS_DEFAULTS["check_interval"] = min(3600, max(10, args.uptime_interval))
+    if args.proto:
+        SYS_DEFAULTS["protocol"] = args.proto
+        if args.force_protocol:
+            SYS_FORCED.add("protocol")
     fp_ext.DOCKER_SOCK = args.docker_sock
     TRUSTED_PROXIES = parse_trusted_proxies(args.trusted_proxy)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -1487,21 +1847,24 @@ def main():
     db = os.path.abspath(args.db)
     STATE = State(Store(db))
     fp_ext.migrate()   # additive: CREATE TABLE IF NOT EXISTS push_state
-    UPTIME["interval"] = max(10, args.uptime_interval)
+    load_sys()
     UPTIME["retention_days"] = max(1, args.uptime_retention)
     srv = http.server.ThreadingHTTPServer((args.host, args.port), Handler)
     srv.is_https = False
-    if args.https:
+    if SYS["protocol"] == "https":
         certdir = os.path.join(os.path.dirname(db), "certs")
-        cert = os.path.abspath(args.cert or os.path.join(certdir, "server.crt"))
-        key = os.path.abspath(args.key or os.path.join(certdir, "server.key"))
-        ensure_cert(cert, key)
-        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
-        ctx.load_cert_chain(cert, key)
-        # handshake in the handler thread, so a slow client cannot block accept()
-        srv.socket = ctx.wrap_socket(srv.socket, server_side=True, do_handshake_on_connect=False)
-        srv.is_https = True
+        dcert, dkey = os.path.join(certdir, "server.crt"), os.path.join(certdir, "server.key")
+        cert = os.path.abspath(args.cert or dcert)
+        key = os.path.abspath(args.key or dkey)
+        ctx = tls_context(cert, key, dcert, dkey)
+        if ctx:
+            # handshake in the handler thread, so a slow client cannot block accept()
+            srv.socket = ctx.wrap_socket(srv.socket, server_side=True, do_handshake_on_connect=False)
+            srv.is_https = True
+        else:
+            RUNTIME["fallback"] = "HTTPS could not start (see log); serving plain HTTP"
+            log.warning("HTTPS could not start with any certificate; FALLING BACK TO PLAIN HTTP so you are not locked out")
+    RUNTIME.update(server=srv, port=args.port, protocol="https" if srv.is_https else "http", restartable=True)
     for fn in (scheduler_loop, uptime_loop, stats_loop):
         threading.Thread(target=fn, daemon=True, name=fn.__name__).start()
     log.info("ForgePanel on %s://%s:%d (database: %s)", "https" if srv.is_https else "http", args.host, args.port, db)

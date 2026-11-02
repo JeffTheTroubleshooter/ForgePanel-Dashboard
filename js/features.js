@@ -31,6 +31,43 @@ function fxInject() {
       <button class="btn" onclick="fxTestNotify()">Send test</button>
       <span class="fx-msg" id="nt-msg"></span>
     </div>
+    <h4>Security</h4>
+    <div class="sub">Only the signed-in admin can change these.</div>
+    <div class="fx-grid">
+      <span class="fx-l">Sign out after inactivity</span>
+      <div class="fx-row3"><select id="sy-idle" onchange="fxEl('sy-idle-c').hidden = this.value !== 'custom'">
+        <option value="0">Off</option><option value="60">1 min (default)</option><option value="300">5 min</option>
+        <option value="900">15 min</option><option value="1800">30 min</option><option value="3600">60 min</option>
+        <option value="custom">Custom…</option></select>
+        <input id="sy-idle-c" type="number" min="1" max="1440" step="1" placeholder="minutes (1–1440)" hidden></div>
+      <span class="fx-l">Protocol</span>
+      <div class="fx-row3"><select id="sy-proto"><option value="https">HTTPS (default, self-signed cert)</option><option value="http">HTTP (unencrypted)</option></select>
+        <span class="fx-l" id="sy-proto-note">Takes effect after restart</span></div>
+      <span class="fx-l">Failed sign-in lockout</span>
+      <div class="fx-row3"><input id="sy-lmax" type="number" min="0" max="100" step="1" title="Attempts before lockout (0 = off)" placeholder="attempts (0 = off)">
+        <input id="sy-lmin" type="number" min="1" max="1440" step="1" title="Lockout duration in minutes" placeholder="minutes locked"><span class="fx-l">attempts · minutes (per username + IP)</span></div>
+    </div>
+    <div class="sub fx-warn" id="sy-fallback" hidden></div>
+    <div class="sub" id="sy-pending" hidden></div>
+    <div class="actions fx-act">
+      <button class="btn primary" onclick="fxSaveSys('sy-msg', fxSecBody())">Save</button>
+      <button class="btn" id="sy-restart" onclick="fxRestart()" hidden>Restart server now</button>
+      <span class="fx-msg" id="sy-msg"></span>
+    </div>
+    <h4>Monitoring</h4>
+    <div class="fx-grid">
+      <span class="fx-l">Check every (seconds)</span><input id="sy-ci" type="number" min="10" max="3600" step="1" placeholder="10–3600">
+      <span class="fx-l">Check timeout (seconds)</span><input id="sy-ct" type="number" min="1" max="30" step="1" placeholder="1–30, shorter than the interval">
+    </div>
+    <div class="actions fx-act"><button class="btn primary" onclick="fxSaveSys('mo-msg', fxMonBody())">Save</button><span class="fx-msg" id="mo-msg"></span></div>
+    <h4>Backup &amp; restore</h4>
+    <div class="sub">A full backup of the dashboard (tiles, groups, icons, settings, account and scan results) as JSON. Data stays encrypted with your account key; TLS private keys are never included. Restoring replaces everything and signs you out; a pre-restore copy is saved in database/backups/ first.</div>
+    <div class="actions fx-act">
+      <button class="btn" onclick="fxBackup()">Download backup</button>
+      <button class="btn" onclick="fxEl('sy-restore-file').click()">Restore from backup…</button>
+      <input type="file" id="sy-restore-file" accept=".json" hidden onchange="fxRestore(this)">
+      <span class="fx-msg" id="bk-msg"></span>
+    </div>
     <h4>Public status page</h4>
     <div class="sub">A read-only page at <a id="ps-link" href="/status" target="_blank" rel="noopener">/status</a> that anyone who can reach this server can open without signing in. Off by default.</div>
     <div class="fx-opts">
@@ -60,7 +97,8 @@ function fxMsg(id, text, bad) { const m = fxEl(id); if (m) { m.textContent = tex
 async function openSettings() {
   fxInject();
   fxEl("fx-settings").classList.add("show");
-  fxMsg("nt-msg", ""); fxMsg("ps-msg", "");
+  fxMsg("nt-msg", ""); fxMsg("ps-msg", ""); fxMsg("sy-msg", ""); fxMsg("mo-msg", ""); fxMsg("bk-msg", "");
+  fxLoadSys();
   try {
     const n = await api("notify");
     fxEl("nt-dc-on").checked = n.discord.enabled;
@@ -99,6 +137,85 @@ async function fxSavePublic() {
     const p = await api("public-status/config", "PUT", { enabled: fxEl("ps-on").checked, showIps: fxEl("ps-ips").checked, showMap: fxEl("ps-map").checked, title: fxEl("ps-title").value });
     fxMsg("ps-msg", p.enabled ? "Saved. /status is public." : "Saved. /status is off.");
   } catch (e) { if (!handleAuthError(e)) fxMsg("ps-msg", e.message, true); }
+}
+
+// ── Security / Monitoring / Backup (server-side settings, /api/system-settings) ──
+let fxSys = null;
+function fxShowSys(r) {
+  fxSys = r;
+  const st = r.settings, idle = String(st.idle_timeout);
+  const preset = [...fxEl("sy-idle").options].some(o => o.value === idle);
+  fxEl("sy-idle").value = preset ? idle : "custom";
+  fxEl("sy-idle-c").hidden = preset; fxEl("sy-idle-c").value = preset ? "" : Math.round(st.idle_timeout / 60);
+  fxEl("sy-proto").value = st.protocol;
+  fxEl("sy-proto").disabled = r.forced.includes("protocol");
+  fxEl("sy-proto-note").textContent = r.forced.includes("protocol") ? "Fixed by --force-protocol" : "Takes effect after restart";
+  fxEl("sy-lmax").value = st.lockout_max; fxEl("sy-lmin").value = st.lockout_minutes;
+  fxEl("sy-ci").value = st.check_interval; fxEl("sy-ct").value = st.check_timeout;
+  fxEl("sy-fallback").hidden = !r.running.fallback; fxEl("sy-fallback").textContent = r.running.fallback || "";
+  const pend = fxEl("sy-pending");
+  pend.hidden = !r.pendingRestart;
+  if (r.pendingRestart) pend.innerHTML = `Running on <b>${escapeHtml(r.running.protocol.toUpperCase())}</b>. After a restart, open <a href="${escapeHtml(r.newUrl)}">${escapeHtml(r.newUrl)}</a>${r.settings.protocol === "https" ? " (accept the self-signed certificate)" : ""}.`;
+  fxEl("sy-restart").hidden = !(r.pendingRestart && r.restartSupported);
+  if (window.fpIdle) window.fpIdle.setTimeoutMs(st.idle_timeout * 1000);
+}
+async function fxLoadSys() {
+  try { fxShowSys(await api("system-settings")); } catch (e) { if (!handleAuthError(e)) fxMsg("sy-msg", e.message, true); }
+}
+function fxInt(id) { const v = fxEl(id).value.trim(); return v === "" ? NaN : Number(v); }
+function fxSecBody() {
+  const sel = fxEl("sy-idle").value;
+  const idle = sel === "custom" ? fxInt("sy-idle-c") * 60 : Number(sel);
+  const b = { idle_timeout: idle, lockout_max: fxInt("sy-lmax"), lockout_minutes: fxInt("sy-lmin") };
+  if (!fxEl("sy-proto").disabled) b.protocol = fxEl("sy-proto").value;
+  return b;
+}
+function fxMonBody() { return { check_interval: fxInt("sy-ci"), check_timeout: fxInt("sy-ct") }; }
+async function fxSaveSys(msgId, body) {
+  for (const [k, v] of Object.entries(body)) if (typeof v === "number" && !Number.isInteger(v)) return fxMsg(msgId, `Enter a whole number for ${k.replace("_", " ")}.`, true);
+  try {
+    const r = await api("system-settings", "PUT", body);
+    fxShowSys(r);
+    fxMsg(msgId, r.pendingRestart && msgId === "sy-msg" ? "Saved. Protocol change takes effect after restart." : "Saved.");
+  } catch (e) { if (!handleAuthError(e)) fxMsg(msgId, e.message, true); }
+}
+async function fxRestart() {
+  if (!(await showModal("Restart server", "Restart ForgePanel now? Everyone is disconnected for a few seconds.", "Restart", true))) return;
+  try {
+    const r = await api("system/restart", "POST", {});
+    fxEl("sy-pending").hidden = false;
+    fxEl("sy-pending").innerHTML = `Restarting… open <a href="${escapeHtml(r.newUrl)}">${escapeHtml(r.newUrl)}</a> in a few seconds and sign in again.`;
+    fxMsg("sy-msg", "Restarting.");
+  } catch (e) { if (!handleAuthError(e)) fxMsg("sy-msg", e.message, true); }
+}
+async function fxBackup() {
+  const pw = await askPassword("Download backup", "The backup contains your account and encrypted dashboard data. Keep it private.");
+  if (!pw) return;
+  try {
+    const r = await api("backup", "POST", { password: pw });
+    const url = URL.createObjectURL(new Blob([JSON.stringify(r.backup, null, 1)], { type: "application/json" }));
+    const a = Object.assign(document.createElement("a"), { href: url, download: r.filename });
+    document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 5000);
+    fxMsg("bk-msg", "Backup downloaded.");
+  } catch (e) { if (!handleAuthError(e)) fxMsg("bk-msg", e.message, true); }
+}
+async function fxRestore(input) {
+  const f = input.files && input.files[0]; input.value = "";
+  if (!f) return;
+  let backup;
+  try { backup = JSON.parse(await f.text()); } catch { return fxMsg("bk-msg", "Not a valid JSON file.", true); }
+  if (!backup || backup.format !== "forgepanel-backup") return fxMsg("bk-msg", "Not a ForgePanel backup file.", true);
+  const ok = await showModal("Restore backup",
+    `Replace ALL dashboard data, settings and the account with the backup from ${backup.created || "an unknown date"}? A pre-restore copy is saved first. You will be signed out and must sign in with the password from the backup.`,
+    "Restore", true);
+  if (!ok) return;
+  const pw = await askPassword("Restore backup", "Confirm with your current password.");
+  if (!pw) return;
+  try {
+    await api("restore", "POST", { password: pw, confirm: true, backup });
+    await showModal("Restored", "Backup restored. Sign in again with the password from the backup.", "OK");
+    location.href = "login.html";
+  } catch (e) { if (!handleAuthError(e)) fxMsg("bk-msg", e.message, true); }
 }
 
 // ── Docker import ──

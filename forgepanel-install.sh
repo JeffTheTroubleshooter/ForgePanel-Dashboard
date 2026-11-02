@@ -133,6 +133,7 @@ ask_user() {
     HTTPS_FLAG=" --https --cert $CERT_DIR/server.crt --key $CERT_DIR/server.key"
     info "HTTPS enabled (self-signed cert in $CERT_DIR). Use --http or FORGEPANEL_HTTPS=0 for plain HTTP."
   else
+    HTTPS_FLAG=" --http"
     info "Plain HTTP selected (--http / FORGEPANEL_HTTPS=0)."
   fi
 
@@ -355,7 +356,7 @@ log_hint() {
 
 check_health() {
   local scheme="http" opts=(-sS -o /dev/null)
-  if [[ -n "$HTTPS_FLAG" ]]; then
+  if [[ "$HTTPS_FLAG" == *--https* ]]; then
     scheme="https"
     opts+=(-k)
   fi
@@ -514,9 +515,9 @@ main() {
       ok "Done in $(elapsed)"
       echo
       local scheme="http"
-      [[ -n "$HTTPS_FLAG" ]] && scheme="https"
+      [[ "$HTTPS_FLAG" == *--https* ]] && scheme="https"
       echo "  Open:  $scheme://${ip:-localhost}:$PORT"
-      if [[ -n "$HTTPS_FLAG" ]]; then
+      if [[ "$HTTPS_FLAG" == *--https* ]]; then
         echo "  HTTPS: self-signed cert in $CERT_DIR/ (kept on reinstall)"
         echo "         Your browser warns once about the self-signed certificate; accept it to continue."
         echo "         For no warning at all, put ForgePanel behind Nginx Proxy Manager with a real certificate."

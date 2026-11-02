@@ -56,9 +56,12 @@ const FP_ACTIVITY_KEY = "fp_last_activity";
 const FP_LOGOUT_KEY = "fp_idle_logout";
 
 function fpIdleGuard(opts = {}) {
-  const timeout = Math.max(5000, opts.timeoutMs || IDLE_TIMEOUT_MS);
+  // timeoutMs: 0 = off (Settings → Security); setTimeoutMs() applies a new value immediately.
+  const norm = ms => (ms === 0 ? 0 : Math.max(5000, ms || IDLE_TIMEOUT_MS));
+  let timeout = norm(opts.timeoutMs);
   const loginUrl = opts.loginUrl || "login.html?reason=inactivity";
-  const hbEvery = Math.min(15000, Math.floor(timeout / 4));
+  const hbIdle = 15000;
+  let hbEvery = timeout ? Math.min(15000, Math.floor(timeout / 4)) : hbIdle;
   window.FP_PASSIVE_API = true;
   let last = Date.now(), lastHb = 0, done = false, lastWrite = 0;
   const readShared = () => { try { return Number(localStorage.getItem(FP_ACTIVITY_KEY)) || 0; } catch { return 0; } };
@@ -92,8 +95,16 @@ function fpIdleGuard(opts = {}) {
   });
   const timer = setInterval(() => {
     if (done) return clearInterval(timer);
+    if (!timeout) return;
     const latest = Math.max(last, readShared());
     if (Date.now() - latest >= timeout) expire(true);
   }, 1000);
-  return { expire, touch: onActivity };
+  function setTimeoutMs(ms) {
+    timeout = norm(ms);
+    hbEvery = timeout ? Math.min(15000, Math.floor(timeout / 4)) : hbIdle;
+    last = Date.now(); writeShared(last);
+  }
+  const guard = { expire, touch: onActivity, setTimeoutMs };
+  window.fpIdle = guard;
+  return guard;
 }

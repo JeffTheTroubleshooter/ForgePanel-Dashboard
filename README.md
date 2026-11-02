@@ -113,7 +113,7 @@ A running scan can be stopped with **Cancel scan**:
 ## Auto-scans, Uptime, Groups and Server Stats
 
 - **Scheduled auto-scans** – pick *Off / Hourly / Daily / Custom* in the toolbar (or set `[schedule] interval` and `minutes` in `scan/scan.conf`; the dashboard setting wins). Scans run in a background thread. Services you don't have a tile for show up under the **Scan history** button's badge, where you can accept (adds tiles) or dismiss (hidden for good). The last 50 scans are kept as history.
-- **Uptime history** – the server checks every tile (default every 60 s, `--uptime-interval`) and stores up/down plus response time in SQLite for 8 days (`--uptime-retention`). Each tile shows a sparkline; click it for 24h / 7d graphs and the uptime %.
+- **Uptime history** – the server checks every tile (default every 60 s with a 3 s timeout; change both in **Settings → Monitoring**, `--uptime-interval` sets the default) and stores up/down plus response time in SQLite for 8 days (`--uptime-retention`). Each tile shows a sparkline; click it for 24h / 7d graphs and the uptime %.
 - **Groups and reordering** – *Add group* asks for a name and lets you tick which services go in it. Grab a tile by its ⋮⋮ handle (mouse or touch): it lifts with a yellow outline, the other tiles slide aside to open a gap where you point, and it drops exactly there. Drop it on another group (its header or its tiles) and you are asked to confirm the move; *No* puts it back. The tile's ⋮ menu also has *Move to group*. Groups can be renamed, deleted, collapsed and dragged to reorder. The layout is saved in the database.
 - **Scan history** – the *Scan history* button (badge = new services waiting) lists recent scans and the new services to accept or dismiss.
 - **Server stats** – the *Server stats* button shows CPU, RAM, disk, uptime, load and network (read from `/proc`), refreshed every 5 s with small graphs. Linux only.
@@ -196,7 +196,7 @@ Hover a tile **or its line** to see the last response time. When a check goes fr
 
 ## HTTPS
 
-Start with `--https`. The installer enables HTTPS by default (pass `--http` or set `FORGEPANEL_HTTPS=0` for plain HTTP): it installs openssl if needed and creates a self-signed RSA 2048 certificate valid 825 days (SAN = container IPs, hostname, localhost) in `<install dir>/database/certs/` (outside git, key 0600, owned by the service user, kept on reinstall). Your browser warns once about the self-signed certificate; for no warning at all, put ForgePanel behind Nginx Proxy Manager with a real certificate. On first start the server runs `openssl` to make a self-signed certificate in `database/certs/` (key is 0600, never served, never committed). Use `--cert` / `--key` to use your own certificate instead. The session cookie gets the `Secure` flag.
+HTTPS is the default (no flag needed); change it in **Settings → Security** or with `--https` / `--http` (see *Settings precedence*). The installer enables HTTPS by default (pass `--http` or set `FORGEPANEL_HTTPS=0` for plain HTTP): it installs openssl if needed and creates a self-signed RSA 2048 certificate valid 825 days (SAN = container IPs, hostname, localhost) in `<install dir>/database/certs/` (outside git, key 0600, owned by the service user, kept on reinstall). Your browser warns once about the self-signed certificate; for no warning at all, put ForgePanel behind Nginx Proxy Manager with a real certificate. On first start the server runs `openssl` to make a self-signed certificate in `database/certs/` (key is 0600, never served, never committed). Use `--cert` / `--key` to use your own certificate instead. The session cookie gets the `Secure` flag.
 
 Your browser will warn because the certificate is self-signed. Either accept the warning once, or trust it: copy `database/certs/server.crt` to your computer and import it — Windows: *certmgr.msc → Trusted Root Certification Authorities*; macOS: Keychain Access → System → set *Always Trust*; Linux: copy to `/usr/local/share/ca-certificates/forgepanel.crt` and run `sudo update-ca-certificates`; Firefox: *Settings → Certificates → Authorities → Import*. If the server's IP or hostname changes, delete `database/certs/` and restart to make a new one.
 
@@ -226,14 +226,38 @@ curl -fsS http://localhost:8084/api/health
 
 - `server.py` keeps everything in `database/forgepanel.db` (SQLite, file 0600, folder 0700). The server never serves `database/`, `scan/results.*`, `config/`, `.py`/`.sh`/`.conf` files or dotfiles, and has no directory listings.
 - Passwords and security answers are hashed with scrypt and a random per-user salt. Sessions are random tokens in an `HttpOnly; SameSite=Strict` cookie that expires after 12 hours.
-- **Inactivity auto-logout:** after 60 seconds with no mouse, keyboard, scroll or touch input (in any open dashboard tab), the dashboard signs you out and the login page shows *"You have been logged out due to inactivity."* The server enforces the same idle limit: background polling does not count as activity (it sends `X-FP-Passive: 1`), only real input sends a heartbeat. Change it with `python3 server.py --idle-timeout 300` (seconds, `0` = off); the client uses the server's value. It is a constant in `server.py` (`IDLE_TIMEOUT`). Login, export and forgot-password attempts are limited to 5 failures per 5 minutes per IP.
+- **Inactivity auto-logout:** after 60 seconds with no mouse, keyboard, scroll or touch input (in any open dashboard tab), the dashboard signs you out and the login page shows *"You have been logged out due to inactivity."* The server enforces the same idle limit: background polling does not count as activity (it sends `X-FP-Passive: 1`), only real input sends a heartbeat. Change it in **Settings → Security** (Off, 1 min default, 5/15/30/60 min or custom minutes); the open dashboard picks up the new value immediately. `--idle-timeout SECONDS` only sets the default used until a value is saved in Settings (see *Settings precedence* below).
+- **Failed sign-in lockout:** after 5 wrong passwords (configurable in **Settings → Security**, `0` = off) for the same username from the same IP, sign-in is locked for 15 minutes (configurable, 1–1440). The login page shows that it is locked and roughly when to retry. Export, backup/restore and forgot-password attempts are still limited to 5 failures per 5 minutes per IP.
 - With the `cryptography` package (`python3-cryptography`) installed, dashboard settings, custom services and scan results are encrypted with AES-256-GCM. The data key is wrapped by keys derived from your password and your security answer, and is unwrapped only in server memory while you are signed in. Changing or resetting the password re-encrypts everything with a new key.
 - **Without `cryptography` the data is stored unencrypted**; the server logs a warning at startup. Passwords are still hashed.
 - The browser no longer stores anything except the session cookie, so the dashboard works over plain `http://<ip>`. Traffic itself is not encrypted on plain HTTP; put ForgePanel behind a reverse proxy with HTTPS (e.g. Nginx Proxy Manager) if you reach it over untrusted networks.
 
+### Settings → Security, Monitoring, Backup
+
+Open **Settings** in the toolbar (you must be signed in; ForgePanel has a single admin account):
+
+| Setting | Values | Applies |
+|---|---|---|
+| Sign out after inactivity | Off, 1 (default), 5, 15, 30, 60 min, custom 1–1440 min | immediately |
+| Protocol | HTTPS (default, self-signed cert in `database/certs/`) or HTTP | after restart (*Restart server now* button re-executes the server and shows the new URL) |
+| Failed sign-in lockout | attempts 0 (off)–100, default 5; duration 1–1440 min, default 15 | immediately |
+| Check every / check timeout | 10–3600 s (default 60) / 1–30 s (default 3), timeout shorter than interval | immediately |
+
+They are saved in SQLite (`meta.sys_settings`, plain JSON, no secrets) and validated server-side.
+
+**Settings precedence** (highest first):
+1. `--force-protocol` together with `--https` or `--http` (protocol only; the dashboard selector is then locked).
+2. The value saved in Settings.
+3. Command-line flags as defaults: `--idle-timeout`, `--uptime-interval`, `--https` / `--http`.
+4. Built-in defaults (1 min idle, HTTPS, 60 s / 3 s checks, lock after 5 failures for 15 min).
+
+So the installer's systemd unit (which passes `--https --cert … --key …` or `--http`) keeps working and only provides the default until you change the protocol in the dashboard. If HTTPS cannot start (missing or broken certificate), the server moves the broken default pair aside (`*.bad`), regenerates the self-signed certificate, and if that also fails it serves plain HTTP with a warning in the log and in Settings, so you are never locked out. The restart button re-executes the same command line (works under systemd, OpenRC, Docker and manual runs). Custom certificate upload is not supported; use `--cert` / `--key`.
+
 ### Backup
 
-Back up the `database/` folder (stop the service first), or use **Export** in the dashboard for a password-encrypted `forgepanel.conf`. See [database/README.md](database/README.md) for backup and restore steps.
+**Settings → Backup & restore** downloads a JSON backup (after confirming your password) of everything needed to fully restore: tiles, groups, icons, settings, notification config, scan results and the account (password hash and wrapped data key, so sign in with the password that was active when the backup was made). Dashboard data and secrets stay encrypted with the account key; without `cryptography` the file says they are plain text. TLS certificates and private keys are never included, nor is uptime history. *Restore from backup…* validates the file, asks for confirmation and your current password, saves a pre-restore copy in `database/backups/` (last 5 kept), replaces the data and signs everyone out.
+
+You can also back up the `database/` folder (stop the service first), or use **Export** in the dashboard for a password-encrypted `forgepanel.conf`. See [database/README.md](database/README.md) for backup and restore steps.
 
 ### Upgrading from the IndexedDB version
 
@@ -327,7 +351,7 @@ It stops and removes the `forgepanel` service (systemd, or OpenRC on Alpine), as
 cd ForgePanel-Dashboard
 python3 server.py                 # http://localhost:8084, database in database/
 python3 server.py --port 8084 --host 0.0.0.0 --db database/forgepanel.db
-# optional: --https [--cert FILE --key FILE] --uptime-interval 60 --uptime-retention 8
+# optional: --https|--http [--force-protocol] [--cert FILE --key FILE] --idle-timeout 60 --uptime-interval 60 --uptime-retention 8
 #           --docker-sock /var/run/docker.sock --trusted-proxy 172.16.0.0/12
 ```
 
