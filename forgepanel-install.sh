@@ -4,7 +4,10 @@
 # Detects distro, installs python3 (with sqlite3), git, curl and the optional
 # python3 cryptography package, clones/updates the repo, prepares database/,
 # opens the firewall port and runs server.py as a systemd/OpenRC service.
-# After starting it checks GET /api/health to confirm the service is up.
+# Python deps from requirements.txt come from distro packages, or a venv in
+# <install dir>/.venv (never pip --break-system-packages).
+# After starting it waits for the port and POSTs /api/login (expects 400/401,
+# never 404) to confirm the backend, not a static file server, is answering.
 #
 # Usage:
 #   bash forgepanel-install.sh            # install
@@ -18,6 +21,13 @@ REPO_URL="https://github.com/JeffTheTroubleshooter/ForgePanel-Dashboard.git"
 DEFAULT_PORT=8084
 DEFAULT_DIR="/opt/forgepanel"
 SERVICE_NAME="forgepanel"
+PYTHON=""
+# run as root without sudo (e.g. a fresh LXC/Alpine container)
+if [[ $(id -u) -eq 0 ]] && ! command -v sudo >/dev/null 2>&1; then
+  sudo() { "$@"; }
+fi
+SVC_USER="${SUDO_USER:-$(id -un)}"
+SVC_GROUP="$(id -gn "$SVC_USER" 2>/dev/null || id -gn)"
 
 # ── helpers ────────────────────────────────────────────────────────────────
 die() { echo -e "\n\033[1;31mError:\033[0m $*" >&2; exit 1; }
@@ -28,7 +38,8 @@ prompt() { local var="$1" msg="$2" default="$3"; read -rp "$msg [$default]: " in
 ask_yn() { local msg="$1" default="${2:-n}"; local ans; read -rp "$msg [y/N]: " ans; ans="${ans:-$default}"; [[ "$ans" =~ ^[Yy] ]]; }
 
 elapsed() {
-  local end=$(date +%s)
+  local end
+  end=$(date +%s)
   local secs=$((end - START_TIME))
   printf '%dm %ds' $((secs/60)) $((secs%60))
 }
@@ -138,14 +149,74 @@ setup_files() {
     sudo git clone --depth 1 "$REPO_URL" "$INSTALL_DIR"
   fi
   [[ -f "$INSTALL_DIR/server.py" ]] || die "server.py missing in $INSTALL_DIR."
-  sudo chown -R "$USER:$(id -gn)" "$INSTALL_DIR" 2>/dev/null || true
+  sudo chown -R "$SVC_USER:$SVC_GROUP" "$INSTALL_DIR" 2>/dev/null || true
 
-  # database folder: only the service user may read it
+  # database folder (kept across upgrades): only the service user may read it
   sudo mkdir -p "$INSTALL_DIR/database"
-  sudo chown "$USER:$(id -gn)" "$INSTALL_DIR/database"
+  sudo chown -R "$SVC_USER:$SVC_GROUP" "$INSTALL_DIR/database"
   sudo chmod 700 "$INSTALL_DIR/database"
-  [[ -f "$INSTALL_DIR/database/forgepanel.db" ]] && sudo chmod 600 "$INSTALL_DIR/database/forgepanel.db"
-  ok "Files ready (database: $INSTALL_DIR/database, mode 0700)."
+  if [[ -f "$INSTALL_DIR/database/forgepanel.db" ]]; then
+    sudo chmod 600 "$INSTALL_DIR/database/forgepanel.db"
+    ok "Existing database kept: $INSTALL_DIR/database/forgepanel.db"
+  fi
+  ok "Files ready (database: $INSTALL_DIR/database, mode 0700, owner $SVC_USER)."
+}
+
+# ── python dependencies (requirements.txt) ─────────────────────────────────
+# prints the requirement lines that the given python cannot satisfy
+missing_reqs() {
+  "$1" - "$INSTALL_DIR/requirements.txt" <<'PYEOF' 2>/dev/null
+import re, sys
+try:
+    from importlib.metadata import version, PackageNotFoundError
+except ImportError:
+    sys.exit(0)
+for line in open(sys.argv[1]):
+    line = line.split("#", 1)[0].strip()
+    if not line:
+        continue
+    name = re.split(r"[<>=!~;\[ ]", line, 1)[0]
+    try:
+        version(name)
+    except PackageNotFoundError:
+        print(line)
+PYEOF
+}
+
+install_python_deps() {
+  PYTHON=$(command -v python3)
+  local req="$INSTALL_DIR/requirements.txt"
+  if [[ ! -f "$req" ]] || ! grep -qvE '^[[:space:]]*(#|$)' "$req"; then
+    info "No Python requirements to install."
+    return 0
+  fi
+  local venv="$INSTALL_DIR/.venv" missing
+  # reuse a venv from an earlier install
+  if [[ -x "$venv/bin/python" ]]; then
+    PYTHON="$venv/bin/python"
+  fi
+  missing=$(missing_reqs "$PYTHON")
+  if [[ -z "$missing" ]]; then
+    ok "Python requirements satisfied ($PYTHON)."
+    return 0
+  fi
+  info "Missing Python packages: $(echo "$missing" | tr '\n' ' ')- creating venv in $venv ..."
+  case "$PKG" in
+    apt) pkg_install python3-venv python3-pip || true ;;
+    apk) pkg_install py3-pip || true ;;
+  esac
+  if [[ ! -x "$venv/bin/python" ]]; then
+    "$(command -v python3)" -m venv --system-site-packages "$venv" \
+      || { warn "Could not create venv; continuing without: $missing"; return 0; }
+  fi
+  if "$venv/bin/python" -m pip install -q -r "$req"; then
+    PYTHON="$venv/bin/python"
+    sudo chown -R "$SVC_USER:$SVC_GROUP" "$venv" 2>/dev/null || true
+    ok "Python requirements installed in $venv"
+  else
+    warn "pip install -r requirements.txt failed; server.py runs without: $missing"
+    [[ -x "$venv/bin/python" ]] && PYTHON="$venv/bin/python"
+  fi
 }
 
 # ── firewall ───────────────────────────────────────────────────────────────
@@ -161,16 +232,23 @@ open_firewall() {
 }
 
 # ── service ────────────────────────────────────────────────────────────────
-stop_old_static_server() {
-  # installs before server.py ran "python3 -m http.server"; free the port
-  pkill -f "python3? -m http.server $PORT" 2>/dev/null || true
-  pkill -f "python3? -m http.server.*--directory $INSTALL_DIR" 2>/dev/null || true
+stop_old_instances() {
+  # old installs ran "python3 -m http.server" (static files only, /api/login 404);
+  # also stop a nohup-started server.py from this install dir so the port is free
+  sudo pkill -f "python3?[^ ]* -m http\.server $PORT" 2>/dev/null || true
+  sudo pkill -f "python3?[^ ]* -m http\.server.*--directory $INSTALL_DIR" 2>/dev/null || true
+  sudo pkill -f "$INSTALL_DIR/server\.py" 2>/dev/null || true
+  sleep 1
 }
 
 create_service() {
-  local python
-  python=$(command -v python3)
-  stop_old_static_server
+  local python="${PYTHON:-$(command -v python3)}"
+  if command -v systemctl >/dev/null 2>&1; then
+    sudo systemctl stop "$SERVICE_NAME" 2>/dev/null || true
+  elif command -v rc-service >/dev/null 2>&1 && [[ -f "/etc/init.d/${SERVICE_NAME}" ]]; then
+    sudo rc-service "$SERVICE_NAME" stop 2>/dev/null || true
+  fi
+  stop_old_instances
 
   if command -v systemctl >/dev/null 2>&1; then
     info "Creating systemd service..."
@@ -185,7 +263,7 @@ WorkingDirectory=$INSTALL_DIR
 ExecStart=$python $INSTALL_DIR/server.py --port $PORT --host 0.0.0.0$HTTPS_FLAG$PROXY_FLAGS
 Restart=on-failure
 RestartSec=3
-User=$USER
+User=$SVC_USER
 UMask=0077
 
 [Install]
@@ -203,44 +281,70 @@ UNIT
 description="ForgePanel Dashboard"
 command="$python"
 command_args="$INSTALL_DIR/server.py --port $PORT --host 0.0.0.0$HTTPS_FLAG$PROXY_FLAGS"
-command_user="$USER"
+command_user="$SVC_USER:$SVC_GROUP"
 directory="$INSTALL_DIR"
+output_log="/var/log/${SERVICE_NAME}.log"
+error_log="/var/log/${SERVICE_NAME}.log"
 umask=077
 command_background=true
 pidfile="/run/${SERVICE_NAME}.pid"
 OPENRC
     sudo chmod +x "/etc/init.d/${SERVICE_NAME}"
+    sudo touch "/var/log/${SERVICE_NAME}.log"
+    sudo chown "$SVC_USER:$SVC_GROUP" "/var/log/${SERVICE_NAME}.log"
     sudo rc-update add "$SERVICE_NAME" default
     sudo rc-service "$SERVICE_NAME" restart
     ok "OpenRC service enabled and started."
   else
     warn "No systemd or OpenRC detected. Starting in background..."
-    pkill -f "$INSTALL_DIR/server.py" 2>/dev/null || true
-    (cd "$INSTALL_DIR" && umask 077 && nohup "$python" server.py --port "$PORT" --host 0.0.0.0 $HTTPS_FLAG $PROXY_FLAGS >>"$INSTALL_DIR/database/server.log" 2>&1 &)
+    # shellcheck disable=SC2086  # flags are intentionally word-split
+    (cd "$INSTALL_DIR" && umask 077 && nohup "$python" "$INSTALL_DIR/server.py" --port "$PORT" --host 0.0.0.0 $HTTPS_FLAG $PROXY_FLAGS >>"$INSTALL_DIR/database/server.log" 2>&1 &)
     ok "Started in background (log: $INSTALL_DIR/database/server.log)."
   fi
 }
 
 # ── health check ───────────────────────────────────────────────────────────
+log_hint() {
+  if command -v systemctl >/dev/null 2>&1; then
+    echo "sudo journalctl -u $SERVICE_NAME -n 50 --no-pager   (status: sudo systemctl status $SERVICE_NAME)"
+  elif command -v rc-service >/dev/null 2>&1; then
+    echo "/var/log/${SERVICE_NAME}.log   (status: sudo rc-service $SERVICE_NAME status)"
+  else
+    echo "$INSTALL_DIR/database/server.log"
+  fi
+}
+
 check_health() {
-  local scheme="http" opts=(-fsS)
+  local scheme="http" opts=(-sS -o /dev/null)
   if [[ -n "$HTTPS_FLAG" ]]; then
     scheme="https"
     opts+=(-k)
   fi
-  local url="$scheme://127.0.0.1:$PORT/api/health" body=""
-  info "Waiting for the service to answer $url ..."
-  for _ in $(seq 1 20); do
-    if body=$(curl "${opts[@]}" --max-time 3 "$url" 2>/dev/null) && [[ "$body" == *'"app": "forgepanel"'* ]]; then
-      ok "Service is up: $body"
-      return 0
-    fi
+  local base="$scheme://127.0.0.1:$PORT" code="000" up=0
+  info "Waiting up to 15 s for ForgePanel on $base ..."
+  for _ in $(seq 1 15); do
+    code=$(curl "${opts[@]}" -w '%{http_code}' --max-time 2 "$base/api/health" 2>/dev/null) || true
+    if [[ "$code" != "000" ]]; then up=1; break; fi
     sleep 1
   done
-  warn "No ForgePanel answer from $url after 20 s. Check the service:"
-  warn "  sudo systemctl status $SERVICE_NAME   (or: sudo rc-service $SERVICE_NAME status)"
-  warn "  log: $INSTALL_DIR/database/server.log"
-  return 1
+  if (( ! up )); then
+    warn "FAILED: nothing is listening on port $PORT after 15 s."
+    warn "  Log: $(log_hint)"
+    return 1
+  fi
+  # an empty login must be rejected by the backend (400/401); 404 = static file server
+  code=$(curl "${opts[@]}" -w '%{http_code}' --max-time 5 -X POST \
+    -H 'Content-Type: application/json' -d '{}' "$base/api/login" 2>/dev/null) || true
+  case "$code" in
+    404|000|"")
+      warn "FAILED: POST /api/login returned ${code:-no answer} - the server.py backend is not answering on port $PORT."
+      warn "  Is an old 'python3 -m http.server' still running? Check: ps aux | grep -E 'http.server|server.py'"
+      warn "  Log: $(log_hint)"
+      return 1 ;;
+    *)
+      ok "Backend OK: POST /api/login answered HTTP $code (sign-in API is live)."
+      return 0 ;;
+  esac
 }
 
 # ── uninstall ──────────────────────────────────────────────────────────────
@@ -268,14 +372,14 @@ remove_service() {
     fi
   fi
   # best-effort stop of background processes (server.py or an old http.server)
-  pkill -f "forgepanel.*/server.py|[/ ]server.py --port" 2>/dev/null || true
-  pkill -f "python3 -m http.server" 2>/dev/null || true
+  sudo pkill -f "forgepanel.*/server\.py|[/ ]server\.py --port" 2>/dev/null || true
+  sudo pkill -f "python3?[^ ]* -m http\.server" 2>/dev/null || true
 }
 
 backup_database() {
   local dir="$1" dest
   dest="$HOME/forgepanel-database-backup-$(date +%Y%m%d-%H%M%S)"
-  sudo cp -a "$dir/database" "$dest" && sudo chown -R "$USER:$(id -gn)" "$dest" 2>/dev/null
+  sudo cp -a "$dir/database" "$dest" && sudo chown -R "$SVC_USER:$SVC_GROUP" "$dest" 2>/dev/null
   ok "Database backed up to $dest"
 }
 
@@ -351,6 +455,7 @@ main() {
       install_requirements
       ask_user
       setup_files
+      install_python_deps
       create_service
       open_firewall
       check_health || true
@@ -369,7 +474,9 @@ main() {
       echo "  Database: $INSTALL_DIR/database/forgepanel.db (back this folder up)"
       echo "  Health: $scheme://${ip:-localhost}:$PORT/api/health"
       echo
-      echo "Default login (change on first use): admin / forgepanel"
+      echo "Default login: admin / forgepanel (you must change it on first login)"
+      echo
+      echo "Logs: $(log_hint)"
       echo
       echo "Service commands:"
       if command -v systemctl >/dev/null 2>&1; then
