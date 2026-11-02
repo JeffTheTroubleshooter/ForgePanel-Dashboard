@@ -147,7 +147,9 @@ Each tile's menu (⋮ → **Check & widget…**) picks how the service is checke
 
 **Send test** sends a test message to every enabled channel. The webhook URL and token are stored encrypted in SQLite. They are shown masked, are never returned to the browser in full, and are never logged.
 
-## Docker Discovery
+## Docker Discovery (Experimental)
+
+> **Experimental:** may not work with every setup yet.
 
 The **Docker** toolbar button reads `/var/run/docker.sock` (read-only GET `/containers/json`; change it with `--docker-sock PATH`) and lists running containers. Containers with labels are pre-selected:
 

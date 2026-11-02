@@ -44,7 +44,8 @@ function fxInject() {
 </div>
 <div id="fx-docker" class="overlay" onclick="if (event.target === this) closeOverlay('fx-docker')">
   <div class="panel fx">
-    <h3><span>Import from Docker</span><button class="btn" onclick="closeOverlay('fx-docker')">Close</button></h3>
+    <h3><span>Import from Docker <span class="fx-exp" title="Experimental feature">Experimental</span></span><button class="btn" onclick="closeOverlay('fx-docker')">Close</button></h3>
+    <div class="sub fx-expnote">Experimental: may not work with every setup yet.</div>
     <div class="sub" id="dk-sub">Reading the Docker socket…</div>
     <div id="dk-list"></div>
     <div class="actions fx-act" id="dk-act" hidden><button class="btn primary" onclick="fxDockerImport()">Import selected</button><span class="fx-msg" id="dk-msg"></span></div>

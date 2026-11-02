@@ -6,9 +6,9 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <title>ForgePanel</title>
-<link rel="icon" type="image/png" sizes="32x32" href="../assets/favicon-32.png?v=20261102c">
-<link rel="icon" type="image/png" sizes="192x192" href="../assets/favicon-192.png?v=20261102c">
-<link rel="apple-touch-icon" href="../assets/favicon-192.png?v=20261102c">
+<link rel="icon" type="image/png" sizes="32x32" href="../assets/favicon-32.png?v=20261102d">
+<link rel="icon" type="image/png" sizes="192x192" href="../assets/favicon-192.png?v=20261102d">
+<link rel="apple-touch-icon" href="../assets/favicon-192.png?v=20261102d">
 <style>
   :root {
     --bg: #0a0a0a;
@@ -254,7 +254,7 @@
   .brand-logo { width:64px; height:64px; display:block; }
   .cm-bubble { position:absolute; left:calc(100% + 12px); top:50%; transform:translateY(-50%); white-space:nowrap; background:#141414; border:1px solid #2a2a2a; border-left:2px solid #ff2a2a; color:#e5e5e5; font-size:12px; padding:5px 10px; border-radius:10px; pointer-events:none; }
 </style>
-<link rel="stylesheet" href="../css/main.css?v=20261102c">
+<link rel="stylesheet" href="../css/main.css?v=20261102d">
 </head>
 <body>
 <iframe id="bg" src="dots.html"></iframe>
@@ -263,7 +263,7 @@
   <header>
     <h1 class="sr-only">ForgePanel – Service Dashboard</h1>
     <div class="brand-wrap">
-      <button class="brand-btn" id="brand-btn" onclick="toggleCoreMap()" aria-label="ForgePanel – Service Dashboard. Toggle Core Map view" aria-pressed="false" title="ForgePanel – toggle Core Map"><img class="brand-logo" src="../assets/logo.svg?v=20261102c" alt="" width="64" height="64"></button>
+      <button class="brand-btn" id="brand-btn" onclick="toggleCoreMap()" aria-label="ForgePanel – Service Dashboard. Toggle Core Map view" aria-pressed="false" title="ForgePanel – toggle Core Map"><img class="brand-logo" src="../assets/logo.svg?v=20261102d" alt="" width="64" height="64"></button>
       <span class="cm-bubble" id="cm-bubble" aria-hidden="true">Click me</span>
     </div>
   </header>
@@ -271,7 +271,7 @@
     <button class="tbtn" onclick="addCustom()">Add service</button>
     <button class="tbtn" onclick="addGroup()" title="Create a group, then drag tiles into it">Add group</button>
     <button class="tbtn" id="stats-btn" onclick="toggleStats()" title="CPU, RAM, disk and network of the ForgePanel server">Server stats</button>
-    <button class="tbtn" onclick="openDocker()" title="Add tiles from running Docker containers (forgepanel.* labels)">Docker</button>
+    <button class="tbtn" onclick="openDocker()" title="Add tiles from running Docker containers (forgepanel.* labels) - Experimental">Docker <span class="fx-exp">Exp</span></button>
     <button class="tbtn" onclick="openSettings()" title="Notifications and the public status page">Settings</button>
     <button class="tbtn" id="new-btn" onclick="openNew()" title="Scan history and new services found by automatic scans">Scan history<span class="badge" id="new-badge"></span></button>
     <select id="schedule" onchange="setSchedule(this.value)" title="Automatic network scans">
@@ -336,11 +336,11 @@
   </div>
 </div>
 
-<script src="../js/auth.js?v=20261102c"></script>
-<script src="../js/griddrag.js?v=20261102c"></script>
-<script src="../js/coremap.js?v=20261102c"></script>
-<script src="../js/yaml.js?v=20261102c"></script>
-<script src="../js/features.js?v=20261102c"></script>
+<script src="../js/auth.js?v=20261102d"></script>
+<script src="../js/griddrag.js?v=20261102d"></script>
+<script src="../js/coremap.js?v=20261102d"></script>
+<script src="../js/yaml.js?v=20261102d"></script>
+<script src="../js/features.js?v=20261102d"></script>
 <script>
 let saved = {};
 let user = "";
