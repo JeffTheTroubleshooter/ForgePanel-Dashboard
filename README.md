@@ -254,7 +254,9 @@ sudo systemctl restart forgepanel
 sudo systemctl disable --now forgepanel   # stop and remove from boot
 ```
 
-## Docker
+## Docker (Experimental)
+
+> **Experimental:** the Docker image and compose setup are not fully tested yet.
 
 A `Dockerfile` and `docker-compose.yml` are included. The image runs as an unprivileged user (`uid 10001`), keeps `database/` and `custom_services/` in volumes, and has a built-in health check against `/api/health`.
 
