@@ -238,21 +238,51 @@ Older versions kept data in the browser. Before upgrading, open the old dashboar
 
 ## Automatic Install (with service)
 
-`forgepanel-install.sh` installs ForgePanel and sets it up as a service that starts on boot. It works on Debian/Ubuntu, Fedora/RHEL, Arch, openSUSE and Alpine. It installs python3 (with sqlite3), git, curl and python3-cryptography and openssl, checks that `import sqlite3` / `import cryptography` work, clones or updates the repo (default `/opt/forgepanel`), creates `database/` (0700), asks which port to use (default `8084`), enables HTTPS with a self-signed certificate by default (`--http` / `FORGEPANEL_HTTPS=0` to opt out) and whether the server sits behind a reverse proxy (adds `--trusted-proxy <CIDR>`), opens that port in ufw/firewalld if active, creates a `forgepanel` systemd service (OpenRC on Alpine) running `python3 server.py --port <port> --host 0.0.0.0`, and finally checks `GET /api/health` and `POST /api/login` (over https with `curl -k`) to confirm it came up. Open `https://<ip>:8084`. Running it again on an existing install pulls the latest code and restarts the service.
+`forgepanel-install.sh` installs ForgePanel and sets it up as a service that starts on boot.
+
+**Supported:** Debian/Ubuntu, Fedora/RHEL, Arch, openSUSE and Alpine.
+
+### Quick start
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/JeffTheTroubleshooter/ForgePanel-Dashboard/main/forgepanel-install.sh -o forgepanel-install.sh
-bash forgepanel-install.sh            # HTTPS (default)
-# bash forgepanel-install.sh --http   # plain HTTP
+curl -fsSL -o forgepanel-install.sh \
+  https://raw.githubusercontent.com/JeffTheTroubleshooter/ForgePanel-Dashboard/main/forgepanel-install.sh
+bash forgepanel-install.sh
 ```
 
-Then open `http://<your-server-ip>:8084`. To manage the service:
+Then open **`https://<your-server-ip>:8084`**. Your browser warns once about the self-signed certificate; continue to the site.
+
+Default login: `admin` / `forgepanel` (you must change it on first login).
+
+### What it does
+
+1. Installs `python3` (with sqlite3), `git`, `curl`, `python3-cryptography` and `openssl`.
+2. Clones the repo to `/opt/forgepanel` (or updates it if it's already there).
+3. Creates a private `database/` folder.
+4. Asks for a port (default `8084`) and whether it sits behind a reverse proxy.
+5. Creates a self-signed HTTPS certificate.
+6. Opens the port in ufw or firewalld, if one is active.
+7. Creates the `forgepanel` service (systemd, or OpenRC on Alpine).
+8. Checks that the server answers before it finishes.
+
+Running it again updates to the latest code and restarts the service. Your data is kept.
+
+### Options
+
+| Option | What it does |
+|---|---|
+| `--http` or `FORGEPANEL_HTTPS=0` | Use plain HTTP instead of HTTPS |
+| Reverse proxy prompt | Adds `--trusted-proxy <CIDR>` for Nginx Proxy Manager and similar |
+
+### Manage the service
 
 ```bash
-sudo systemctl status forgepanel
-sudo systemctl restart forgepanel
-sudo systemctl disable --now forgepanel   # stop and remove from boot
+sudo systemctl status forgepanel           # check it's running
+sudo systemctl restart forgepanel          # restart
+sudo systemctl disable --now forgepanel    # stop and remove from boot
 ```
+
+On Alpine, use `rc-service forgepanel status|restart|stop`.
 
 ## Docker (Experimental)
 
