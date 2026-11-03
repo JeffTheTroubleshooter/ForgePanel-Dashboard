@@ -1100,6 +1100,8 @@ async function scanNetwork() {
     try { st = await api("scan", "GET", undefined, ctl.signal); }
     catch (e) { if (ctl.signal.aborted) return done(); done(); if (!handleAuthError(e)) setScanStatus(e.message); return; }
     if (ctl.signal.aborted) return done();
+    // A running scan counts as activity: keep the client idle guard from signing out mid-scan.
+    if (st.running && window.fpIdle) window.fpIdle.touch();
     if (st.running) { setScanStatus(`Scanning network... ${Math.round((Date.now() - t0) / 1000)}s`); continue; }
     done(); setScanStatus("");
     if (st.cancelled) { setScanStatus("Scan cancelled"); return; }

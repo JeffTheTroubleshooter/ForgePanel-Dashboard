@@ -480,6 +480,12 @@ class State:
             self.sessions.pop(tok, None)
             return None
 
+    def keep_alive(self, s):
+        """Mark a session active on behalf of server-side work the user started (a running scan),
+        so a long scan is never cut off by the idle sign-out while the user waits for it."""
+        with self.lock:
+            s["seen"] = time.time()
+
     def drop_others(self, keep):
         with self.lock:
             for t in [t for t in self.sessions if t != keep]:
@@ -1132,6 +1138,7 @@ def r_scan_start(h, d):
     tok, s = h.need_session()
     if not tok:
         return
+    STATE.keep_alive(s)   # starting a scan is a user action even when sent with the passive header
     subnet = d.get("subnet")
     if not start_scan(str(subnet) if subnet else None, "server"):
         return h.send_json(409, {"error": "A scan is already running"})
@@ -1140,6 +1147,8 @@ def r_scan_start(h, d):
 def r_scan_get(h, d):
     tok, s = h.need_session()
     if tok:
+        if STATE.scan["running"]:
+            STATE.keep_alive(s)   # waiting on a scan counts as activity (passive polls otherwise don't)
         h.send_json(200, {"running": STATE.scan["running"], "error": STATE.scan["error"], "source": STATE.scan["source"],
                           "cancelled": bool(STATE.scan.get("cancelled")),
                           "latest": STATE.store.latest_scan(s["dek"])})

@@ -202,6 +202,44 @@ class ForgePanelTest(unittest.TestCase):
         finally:
             server.IDLE_TIMEOUT = old
 
+    def test_long_scan_is_not_cut_off_by_idle_timeout(self):
+        """Regression: a scan running longer than the idle timeout (UI polls /api/scan with
+        X-FP-Passive while the user waits) must keep the session alive and deliver results."""
+        cookie = self.complete_setup()
+        tok = cookie.split("=", 1)[1]
+        sess = server.STATE.sessions[tok]
+        release = threading.Event()
+        real = server.run_scan_job
+
+        def slow_job(subnet, source="server", flag=False, cancel=None):
+            release.wait(10)
+            real("127.0.0.1", source, flag, cancel)
+        server.run_scan_job = slow_job
+        try:
+            passive = {"X-FP-Passive": "1"}
+            st, _, _, _ = self.req("POST", "/api/scan", {}, headers=passive, cookie=cookie)
+            self.assertEqual(st, 202)
+            # The user stays idle for 50 s at a time while passive polls report "running".
+            for _ in range(3):
+                sess["seen"] = time.time() - 50
+                st, d, _, _ = self.req("GET", "/api/scan", headers=passive, cookie=cookie)
+                self.assertEqual(st, 200, d)
+                self.assertTrue(d["running"])
+                self.assertGreater(sess["seen"], time.time() - 5)
+            release.set()
+            for _ in range(100):
+                st, d, _, _ = self.req("GET", "/api/scan", headers=passive, cookie=cookie)
+                self.assertEqual(st, 200, d)
+                if not d["running"]:
+                    break
+                time.sleep(0.1)
+            self.assertFalse(d["running"])
+            self.assertIsNone(d["error"])
+            self.assertEqual(d["latest"]["result"]["subnet"], "127.0.0.1")
+        finally:
+            release.set()
+            server.run_scan_job = real
+
     def test_private_api_requires_a_session(self):
         for path in ("/api/data", "/api/custom", "/api/stats", "/api/schedule"):
             st, d, _, _ = self.req("GET", path)
