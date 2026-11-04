@@ -6,6 +6,12 @@ services:
     restart: unless-stopped
     ports:
       - "8084:8084"
+    # Network scan: on Docker's bridge network the scanner only sees 172.x, so Scan Network
+    # finds nothing. Either use host networking (replace "ports:" above with this line):
+    # network_mode: host
+    # or tell the scanner which LAN to scan:
+    # environment:
+    #   FORGEPANEL_SCAN_SUBNET: "192.168.1.0/24"
     volumes:
       # Database, certificates and all encrypted dashboard data.
       - forgepanel-data:/app/database

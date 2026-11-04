@@ -38,7 +38,8 @@ def load_conf(path):
     s = cp["scan"] if cp.has_section("scan") else {}
     csv = lambda v: [x.strip() for x in v.split(",") if x.strip()]
     conf = {
-        "subnet": s.get("subnet", "auto"),
+        # FORGEPANEL_SCAN_SUBNET (env) beats the file, so Docker/LXC installs can set it without editing scan.conf
+        "subnet": os.environ.get("FORGEPANEL_SCAN_SUBNET", "").strip() or s.get("subnet", "auto"),
         "max_hosts": int(s.get("max_hosts", 1024)),
         "timeout": float(s.get("timeout", 0.6)),
         "threads": max(1, int(s.get("threads", 128))),
@@ -78,9 +79,24 @@ def local_ip():
         s.close()
 
 
+def in_docker_bridge(ip):
+    """True when this process sits on a Docker bridge (container IP in 172.16.0.0/12 + /.dockerenv)."""
+    try:
+        bridge = ipaddress.ip_address(ip) in ipaddress.ip_network("172.16.0.0/12")
+    except ValueError:
+        return False
+    return bridge and os.path.exists("/.dockerenv")
+
+
 def resolve_hosts(spec, max_hosts):
     if spec.strip().lower() == "auto":
         ip = local_ip()
+        if in_docker_bridge(ip):
+            # Inside a Docker bridge network the "local IP" is 172.x: scanning its /24 finds only
+            # this container, so the scan always came back empty. Fail loudly instead.
+            sys.exit(f"ForgePanel runs in a Docker bridge network ({ip}), so subnet=auto would only scan "
+                     f"the container's private network. Run the container with network_mode: host, or set "
+                     f"FORGEPANEL_SCAN_SUBNET (e.g. 192.168.1.0/24) or subnet in scan/scan.conf.")
         spec = str(ipaddress.ip_network(f"{ip}/24", strict=False))
         print(f"Detected local IP {ip}, scanning {spec}")
     hosts = []
